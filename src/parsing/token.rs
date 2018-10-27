@@ -1,14 +1,15 @@
 #[derive(Debug)]
 #[derive(Clone)]
+#[derive(PartialEq)]
 pub enum Because {
     DidNotMatch,
     WasWhitespace,
     WasNotInitialized
 }
 
-//#[derive(PartialEq)]
 #[derive(Debug)]
 #[derive(Clone)]
+#[derive(PartialEq)]
 pub enum TokenType {
     Undefined(Because),
 
@@ -28,6 +29,7 @@ pub enum TokenType {
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 pub struct Token {
     pub kind: TokenType,
 

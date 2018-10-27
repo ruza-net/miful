@@ -2,110 +2,78 @@ use parsing::token::Token;
 use parsing::token::TokenType;
 
 
-trait Value {
-    type Kind;
+pub enum Node {
+    Word(String),
+    Symbol(String),
 
-    fn get_value(&self) -> &Self::Kind;
-}
+    Float(f64),
+    Int(i64),
 
-trait ControlStructure {
-    type Kind;
-}
+    List(Vec<NodeWrapper>),
 
-// [AREA] Declarations
-//
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct Word<'a> {
-    value: &'a str,
-
-    position: (usize, usize)
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct Symbol<'a> {
-    value: &'a str,
-
-    position: (usize, usize)
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct Float {
-    value: f64,
-
-    position: (usize, usize)
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct Int {
-    value: i64,
-
-    position: (usize, usize)
-}
-//
-// [END] Declarations
-
-// [AREA] Implementations
-//
-impl<'a> Value for Word<'a> {
-    type Kind = &'a str;
-
-    fn get_value(&self) -> &&'a str {
-        &self.value
+    Invoke {
+        target: String,
+        with: Vec<NodeWrapper>
     }
 }
 
-impl<'a> Value for Symbol<'a> {
-    type Kind = &'a str;
+pub struct NodeWrapper {
+    pub node: Node,
+    pub position: (usize, usize)
+}
 
-    fn get_value(&self) -> &&'a str {
-        &self.value
+impl<'a> NodeWrapper {
+    pub fn empty() -> NodeWrapper {
+        NodeWrapper {
+            node: Node::List(Vec::new()),
+            position: (0, 0)
+        }
     }
-}
 
-impl Value for Float {
-    type Kind = f64;
-
-    fn get_value(&self) -> &f64 {
-        &self.value
+    pub fn new_list(elements: Vec<NodeWrapper>, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: Node::List(elements),
+            position
+        }
     }
-}
 
-impl Value for Int {
-    type Kind = i64;
-
-    fn get_value(&self) -> &i64 {
-        &self.value
+    pub fn new_word(value: String, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: Node::Word(value),
+            position
+        }
     }
-}
-//
-// [END] Implementations
 
-// [AREA] Structure Nodes
-//
-pub struct ListNode<T> {
-    elements: Vec<Box<Value<Kind = T>>>,
-
-    position: (usize, usize)
-}
-
-pub struct InvokeNode<'a, T> {
-    target: Word<'a>,
-
-    arguments: Vec<Box<Value<Kind = T>>>,
-
-    position: (usize, usize)
-}
-
-impl<T> Value for ListNode<T> {
-    type Kind = Vec<Box<Value<Kind = T>>>;
-
-    fn get_value(&self) -> &Vec<Box<Value<Kind = T>>> {
-        &self.elements
+    pub fn new_symbol(value: String, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: Node::Symbol(value),
+            position
+        }
     }
+
+    pub fn new_float(value: &str, position: (usize, usize)) -> NodeWrapper {
+        let f_value = value.parse::<f64>().unwrap();
+
+        NodeWrapper {
+            node: Node::Float(f_value),
+            position
+        }
+    }
+
+    pub fn new_int(value: &str, position: (usize, usize)) -> NodeWrapper {
+        let i_value = value.parse::<i64>().unwrap();
+
+        NodeWrapper {
+            node: Node::Int(i_value),
+            position
+        }
+    }
+
+    pub fn new_invoke(target: String, with: Vec<NodeWrapper>, position: (usize, usize))
+        -> NodeWrapper {
+            NodeWrapper {
+                node: Node::Invoke { target, with },
+                position
+            }
+        }
 }
-//
-// [END] Structure Nodes
