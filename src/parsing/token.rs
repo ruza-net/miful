@@ -38,7 +38,7 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new_empty() -> Token {
+    pub fn empty() -> Token {
         Token {
             kind: TokenType::Undefined(Because::WasNotInitialized),
 
