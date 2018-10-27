@@ -1,7 +1,16 @@
-#[derive(PartialEq)]
 #[derive(Debug)]
+#[derive(Clone)]
+pub enum Because {
+    DidNotMatch,
+    WasWhitespace,
+    WasNotInitialized
+}
+
+//#[derive(PartialEq)]
+#[derive(Debug)]
+#[derive(Clone)]
 pub enum TokenType {
-    Undefined,
+    Undefined(Because),
 
     LeftParen,
     RightParen,
@@ -19,8 +28,8 @@ pub enum TokenType {
 }
 
 #[derive(Debug)]
-pub struct Token<'a> {
-    pub kind: &'a TokenType,
+pub struct Token {
+    pub kind: TokenType,
 
     pub position: (usize, usize),
     pub span: usize,
@@ -28,10 +37,10 @@ pub struct Token<'a> {
     pub value: String
 }
 
-impl<'a> Token<'a> {
-    pub fn new() -> Token<'a> {
+impl Token {
+    pub fn new_empty() -> Token {
         Token {
-            kind: &TokenType::Undefined,
+            kind: TokenType::Undefined(Because::WasNotInitialized),
 
             position: (0, 0),
             span: 0,
@@ -39,5 +48,15 @@ impl<'a> Token<'a> {
             value: String::new()
         }
     }
-}
 
+    pub fn new(kind: TokenType, position: (usize, usize), span: usize, value: String) -> Token {
+        Token {
+            kind,
+
+            position,
+            span,
+
+            value
+        }
+    }
+}
