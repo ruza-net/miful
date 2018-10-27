@@ -9,6 +9,7 @@ I created Miful as a part of my school project, and I intended it to be a script
 ## Syntax
 
 Miful is LISP-like. It knows exactly 6 syntax elements:
+<<<<<<< HEAD
 
 * word
 * symbol
@@ -16,6 +17,14 @@ Miful is LISP-like. It knows exactly 6 syntax elements:
 * int
 * list *(of any number of any of these types)*
 * function invocation *(with a single name and any number of parameters)*
+=======
+    * word
+    * symbol
+    * float
+    * int
+    * list *(of any number of any of these types)*
+    * function invocation *(with a single name and any number of parameters)*
+>>>>>>> 8fe8c3a27b405537b04c5a7d700d837ba84d4d99
 
 An example of Miful code would be:
 ```
