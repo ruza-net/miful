@@ -1,0 +1,8 @@
+[package]
+name = "miful"
+version = "0.1.0"
+authors = ["Jan Růžička <jan.ruzicka01@gmail.com>"]
+
+[dependencies]
+unicode-segmentation = "1.2.1"
+regex = "1"
