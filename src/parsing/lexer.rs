@@ -19,6 +19,8 @@ enum LexerState {
     Reading(TokenType),
     Building(TokenType),
 
+    Eof,
+
     Undefined
 }
 
@@ -76,6 +78,10 @@ impl<'a> Lexer<'a> {
         self.span = 1;
     }
 
+    fn next_line(&mut self) {
+        self.position = (self.position.0 + 1, 0);
+    }
+
     fn step_forward(&mut self) {
         self.span += 1;
     }
@@ -126,55 +132,65 @@ impl<'a> Lexer<'a> {
     }
 
     fn eat_char(&mut self) {
-        let new_tt = self.try_match();
-        let state = self.state.clone();
+        if self.index == self.string.len() {
+            self.switch_to(LexerState::Eof);
 
-        match state {
-            LexerState::Default => {
-                match new_tt {
-                    TokenType::Undefined(Because::WasWhitespace) => {
-                        if self.get_head() == "\n" {
-                            self.position = (self.position.0 + 1, 0);
+        } else {
+            let new_tt = self.try_match();
+            let state = self.state.clone();
+
+            match state {
+                LexerState::Default => {
+                    match new_tt {
+                        TokenType::Undefined(Because::WasWhitespace) => {
+                            if self.get_head() == "\n" {
+                                self.next_line();
+                            }
+
+                            self.advance();
+                        },
+
+                        TokenType::Undefined(Because::DidNotMatch) => {
+                            panic!(format!("Lexer couldn't match ```{}``` at {:?}",
+                                self.get_workspan(), self.position));
+                        },
+
+                        _ => {
+                            self.switch_to(LexerState::Reading(new_tt));
                         }
+                    }
+                },
 
-                        self.advance();
-                    },
+                LexerState::Reading(tt) => {
+                    match new_tt {
+                        TokenType::Undefined(_) => {
+                            self.step_back();
 
-                    TokenType::Undefined(Because::DidNotMatch) => {
-                        panic!(format!("Lexer couldn't match ```{}``` at {:?}",
-                            self.get_workspan(), self.position));
-                    },
+                            self.switch_to(LexerState::Building(tt));
+                        },
 
-                    _ => {
-                        self.switch_to(LexerState::Reading(new_tt));
+                        _ => {}
                     }
                 }
-            },
 
-            LexerState::Reading(tt) => {
-                match new_tt {
-                    TokenType::Undefined(_) => {
-                        self.step_back();
+                LexerState::Building(_) => {
+                    panic!("Lexer `eat_char` was called in an invalid state `Building(_)`!");
+                },
 
-                        self.switch_to(LexerState::Building(tt));
-                    },
+                LexerState::Undefined => {
+                    panic!("Lexer `eat_char` was called in an invalid state `Undefined`!");
+                },
 
-                    _ => {}
+                LexerState::Eof => {
+                    panic!("Lexer `eat_char` called in an invalid state `Eof`!");
                 }
-            }
-
-            LexerState::Building(_) => {
-                panic!("Lexer `eat_char` was called in an invalid state `Building(_)`!");
-            },
-
-            LexerState::Undefined => {
-                panic!("Lexer `eat_char` was called in an invalid state `Undefined`!");
             }
         }
     }
 
-    pub fn read_next_token(&mut self) -> Token {
+    pub fn read_next_token(&mut self) -> Option<Token> {
         let tt;
+        let mut reached_eof = false;
 
         loop {
             self.eat_char();
@@ -190,14 +206,45 @@ impl<'a> Lexer<'a> {
                     panic!("Lexer reached the state `Undefined` while reading token!");
                 },
 
+                LexerState::Eof => {
+                    tt = TokenType::Undefined(Because::WasNotInitialized);
+
+                    reached_eof = true;
+
+                    break;
+                },
+
                 _ => {
                     self.step_forward();
                 }
             }
         }
 
-        let new_token = Token::new(tt, self.position, self.span, self.get_workspan());
+        if reached_eof {
+            None
 
-        new_token
+        } else {
+            let new_token = Token::new(tt, self.position, self.span, self.get_workspan());
+
+            Some(new_token)
+        }
+    }
+
+    pub fn read_all_tokens(&mut self) -> &Vec<Token> {
+        loop {
+            let new_token = self.read_next_token();
+
+            match new_token {
+                Some(tok) => {
+                    self.tokens.push(tok);
+                },
+
+                None => {
+                    break;
+                }
+            }
+        }
+
+        &self.tokens
     }
 }
