@@ -9,7 +9,7 @@ enum ParserContext {
     InsideList(tok::TokenType)
 }
 
-struct Parser {
+pub struct Parser {
     tokens: Vec<tok::Token>,
     nodes: Vec<ast::NodeWrapper>
 }
