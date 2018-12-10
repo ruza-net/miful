@@ -10,8 +10,8 @@ aka MD2
 
 MD2 implements these global functions:
 
-* if (value) (invoke:1) (invoke:2)
-    > runs (invoke:1) if (value) returns sym(&) and runs (invoke:2) otherwise
+* if (value) {block:1} {invoke:2}
+    > runs {block:1} if (value) returns sym(&) and runs {block:2} otherwise
     > Example:
         ```
         [if [> [: age] 18] {display [: adult-content]} {display [: denial]}]
@@ -59,9 +59,34 @@ MD2 implements these global functions:
 * round (float)
     > rounds (float) to the nearest integer
 
+* let (word) (value) {block}
+    > substitutes (value) for (word) inside {block}
+
 */
 
 
-struct Driver {
+pub struct Driver<'a> {
     parser: parsing::parser::Parser,
+    lexer: parsing::lexer::Lexer<'a>
+}
+
+impl<'a> Driver<'a> {
+    pub fn new(input: &'a str) -> Driver<'a> {
+        Driver {
+            parser: parsing::parser::Parser::empty(),
+            lexer: parsing::lexer::Lexer::new(input, vec![r"&", r"\^", r"~", r"|", r"\\"])
+        }
+    }
+
+    pub fn process(&mut self) {
+        let tokens = self.lexer.read_all_tokens();
+
+        self.parser = parsing::parser::Parser::new(tokens.to_vec());
+
+        let ast = self.parser.construct_tree();
+
+        for node in ast {
+            println!("{}\n", node);
+        }
+    }
 }

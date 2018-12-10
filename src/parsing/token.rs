@@ -10,17 +10,26 @@ pub enum Because {
 #[derive(Debug)]
 #[derive(Clone)]
 #[derive(PartialEq)]
+pub enum Kind {
+    Left,
+    Right,
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
+#[derive(PartialEq)]
+pub enum ControlToken {
+    Paren(Kind),
+    Bracket(Kind),
+    Brace(Kind)
+}
+
+#[derive(Debug)]
+#[derive(Clone)]
+#[derive(PartialEq)]
 pub enum TokenType {
     Undefined(Because),
-
-    LeftParen,
-    RightParen,
-
-    LeftBracket,
-    RightBracket,
-
-    LeftBrace,
-    RightBrace,
+    Control(ControlToken),
 
     Word,
     Int,

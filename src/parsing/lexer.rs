@@ -1,14 +1,16 @@
 extern crate regex;
-extern crate unicode_segmentation;
-
 use self::regex::Regex;
 
-use parsing::token;
-use self::token::Token;
-use self::token::Because;
-use self::token::TokenType;
-
+extern crate unicode_segmentation;
 use self::unicode_segmentation::UnicodeSegmentation;
+
+use parsing::token::Kind;
+use parsing::token::Token;
+use parsing::token::Because;
+use parsing::token::TokenType;
+use parsing::token::ControlToken::Paren;
+use parsing::token::ControlToken::Brace;
+use parsing::token::ControlToken::Bracket;
 
 
 #[derive(Debug)]
@@ -19,7 +21,7 @@ enum LexerState {
     Reading(TokenType),
     Building(TokenType),
 
-    Eof,
+    Eof(TokenType),
 
     Undefined
 }
@@ -46,8 +48,10 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str, word_rule: &'a str,
-            symbol_rule: &'a str, float_rule: &'a str, int_rule: &'a str) -> Lexer<'a> {
+    pub fn new(input: &'a str, symbol_list: Vec<&str>)
+        -> Lexer<'a> {
+
+        let symbol_seq: String = symbol_list.join("");
 
         Lexer {
             tokens: Vec::new(),
@@ -61,10 +65,10 @@ impl<'a> Lexer<'a> {
 
             last_built_token_type: TokenType::Undefined(Because::WasNotInitialized),
 
-            word: Regex::new(word_rule).unwrap(),
-            symbol: Regex::new(symbol_rule).unwrap(),
-            float: Regex::new(float_rule).unwrap(),
-            int: Regex::new(int_rule).unwrap(),
+            word: Regex::new(&format!(r"^[^ \n\r\t\[\]{{}}(){}]+$", symbol_seq)).unwrap(),
+            symbol: Regex::new(&format!(r"^[{}]$", symbol_seq)).unwrap(),
+            float: Regex::new(r"^[0-9]+\.[0-9]+$").unwrap(),
+            int: Regex::new(r"^[0-9]+$").unwrap(),
 
             ws: Regex::new(r"^[ \t\n\r]").unwrap()
         }
@@ -73,9 +77,11 @@ impl<'a> Lexer<'a> {
 
     // [AREA] Position Manipulation
     //
-    fn advance(&mut self) {
+    fn advance(&mut self, new_span: usize) {
         self.index += self.span;
-        self.span = 1;
+        self.span = new_span;
+
+        self.position.1 = self.index;
     }
 
     fn next_line(&mut self) {
@@ -127,70 +133,101 @@ impl<'a> Lexer<'a> {
             TokenType::Undefined(Because::WasWhitespace)
 
         } else {
-            TokenType::Undefined(Because::DidNotMatch)
-        }
-    }
+            match workspan.as_ref() {
+                "(" => TokenType::Control(Paren(Kind::Left)),
+                ")" => TokenType::Control(Paren(Kind::Right)),
 
-    fn eat_char(&mut self) {
-        if self.index == self.string.len() {
-            self.switch_to(LexerState::Eof);
+                "[" => TokenType::Control(Bracket(Kind::Left)),
+                "]" => TokenType::Control(Bracket(Kind::Right)),
 
-        } else {
-            let new_tt = self.try_match();
-            let state = self.state.clone();
+                "{" => TokenType::Control(Brace(Kind::Left)),
+                "}" => TokenType::Control(Brace(Kind::Right)),
 
-            match state {
-                LexerState::Default => {
-                    match new_tt {
-                        TokenType::Undefined(Because::WasWhitespace) => {
-                            if self.get_head() == "\n" {
-                                self.next_line();
-                            }
-
-                            self.advance();
-                        },
-
-                        TokenType::Undefined(Because::DidNotMatch) => {
-                            panic!(format!("Lexer couldn't match ```{}``` at {:?}",
-                                self.get_workspan(), self.position));
-                        },
-
-                        _ => {
-                            self.switch_to(LexerState::Reading(new_tt));
-                        }
-                    }
-                },
-
-                LexerState::Reading(tt) => {
-                    match new_tt {
-                        TokenType::Undefined(_) => {
-                            self.step_back();
-
-                            self.switch_to(LexerState::Building(tt));
-                        },
-
-                        _ => {}
-                    }
-                }
-
-                LexerState::Building(_) => {
-                    panic!("Lexer `eat_char` was called in an invalid state `Building(_)`!");
-                },
-
-                LexerState::Undefined => {
-                    panic!("Lexer `eat_char` was called in an invalid state `Undefined`!");
-                },
-
-                LexerState::Eof => {
-                    panic!("Lexer `eat_char` called in an invalid state `Eof`!");
-                }
+                _ => TokenType::Undefined(Because::DidNotMatch)
             }
         }
     }
 
-    pub fn read_next_token(&mut self) -> Option<Token> {
+    fn eat_char(&mut self) {
+        let reached_eof = self.index + self.span == self.string.len();
+
+        if reached_eof {
+            println!("A {:?}", self.get_workspan());
+        }
+
+        let new_tt = self.try_match();
+        let state = self.state.clone();
+
+
+
+        if reached_eof {
+            println!("B {:?}", self.get_workspan());
+        }
+
+        match state {
+            LexerState::Default => {
+                match new_tt {
+                    TokenType::Undefined(Because::WasWhitespace) => {
+                        if self.get_head() == "\n" {
+                            self.next_line();
+                        }
+
+                        self.advance(0);
+                    },
+
+                    TokenType::Undefined(Because::DidNotMatch) => {
+                        panic!(format!("Lexer couldn't match ```{}``` at {:?}",
+                            self.get_workspan(), self.position));
+                    },
+
+                    TokenType::Control(_) => {
+                        if reached_eof {
+                            self.switch_to(LexerState::Eof(new_tt));
+
+                        } else {
+                            self.switch_to(LexerState::Building(new_tt));
+                        }
+                    },
+
+                    _ => {
+                        if reached_eof {
+                            self.switch_to(LexerState::Eof(new_tt));
+
+                        } else {
+                            self.switch_to(LexerState::Reading(new_tt));
+                        }
+                    }
+                }
+            },
+
+            LexerState::Reading(tt) => {
+                match new_tt {
+                    TokenType::Undefined(_) => {
+                        self.step_back();
+
+                        self.switch_to(LexerState::Building(tt));
+                    },
+
+                    _ => {}
+                }
+            }
+
+            LexerState::Building(_) => {
+                panic!("Lexer `eat_char` was called in an invalid state `Building(_)`!");
+            },
+
+            LexerState::Undefined => {
+                panic!("Lexer `eat_char` was called in an invalid state `Undefined`!");
+            },
+
+            LexerState::Eof(_) => {
+                panic!("Lexer `eat_char` called in an invalid state `Eof`!");
+            }
+        }
+    }
+
+    pub fn read_next_token(&mut self) -> Token {
         let tt;
-        let mut reached_eof = false;
 
         loop {
             self.eat_char();
@@ -206,10 +243,8 @@ impl<'a> Lexer<'a> {
                     panic!("Lexer reached the state `Undefined` while reading token!");
                 },
 
-                LexerState::Eof => {
-                    tt = TokenType::Undefined(Because::WasNotInitialized);
-
-                    reached_eof = true;
+                LexerState::Eof(ref new_tt) => {
+                    tt = new_tt.clone();
 
                     break;
                 },
@@ -220,27 +255,24 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        if reached_eof {
-            None
-
-        } else {
-            let new_token = Token::new(tt, self.position, self.span, self.get_workspan());
-
-            Some(new_token)
-        }
+        Token::new(tt, self.position, self.span, self.get_workspan())
     }
 
     pub fn read_all_tokens(&mut self) -> &Vec<Token> {
         loop {
             let new_token = self.read_next_token();
 
-            match new_token {
-                Some(tok) => {
-                    self.tokens.push(tok);
-                },
+            self.tokens.push(new_token);
 
-                None => {
+            match self.state {
+                LexerState::Eof(_) => {
                     break;
+                }
+
+                _ => {
+                    self.switch_to(LexerState::Default);
+
+                    self.advance(1);
                 }
             }
         }
