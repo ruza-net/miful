@@ -21,7 +21,7 @@ An example of Miful code would be:
 ```
 [define factorial (num)
     [if [= num 0]
-        0
+        1
         [* [factorial [- num 1]] num]
     ]
 ]
