@@ -151,18 +151,8 @@ impl<'a> Lexer<'a> {
     fn eat_char(&mut self) {
         let reached_eof = self.index + self.span == self.string.len();
 
-        if reached_eof {
-            println!("A {:?}", self.get_workspan());
-        }
-
         let new_tt = self.try_match();
         let state = self.state.clone();
-
-
-
-        if reached_eof {
-            println!("B {:?}", self.get_workspan());
-        }
 
         match state {
             LexerState::Default => {

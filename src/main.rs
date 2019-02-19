@@ -4,15 +4,7 @@ mod driver;
 fn main() {
     let test =
     "[
-        define foo {
-            [
-                if [> [first (1 2 3)] [last (1 2 3)]] {
-                    [print [string (Hello world!)]]
-                } {
-                    [print No]
-                }
-            ]
-        }
+        print 3
     ]";
 
     let mut driver = driver::Driver::new(test);

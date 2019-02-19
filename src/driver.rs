@@ -10,7 +10,7 @@ aka MD2
 
 MD2 implements these global functions:
 
-* if (value) {block:1} {invoke:2}
+* if (value) {block:1} {block:2}
     > runs {block:1} if (value) returns sym(&) and runs {block:2} otherwise
     > Example:
         ```
@@ -60,7 +60,9 @@ MD2 implements these global functions:
     > rounds (float) to the nearest integer
 
 * let (word) (value) {block}
-    > substitutes (value) for (word) inside {block}
+    > binds (value) to (word), every call to [: (word)] inside {block} will result into (value)
+
+* define (word) (list<>)
 
 */
 
@@ -72,9 +74,17 @@ pub struct Driver<'a> {
 
 impl<'a> Driver<'a> {
     pub fn new(input: &'a str) -> Driver<'a> {
+        let symbols = vec![
+            r"&",
+            r"\^",
+            r"~",
+            r"|",
+            r"\\"
+        ];
+
         Driver {
             parser: parsing::parser::Parser::empty(),
-            lexer: parsing::lexer::Lexer::new(input, vec![r"&", r"\^", r"~", r"|", r"\\"])
+            lexer: parsing::lexer::Lexer::new(input, symbols)
         }
     }
 

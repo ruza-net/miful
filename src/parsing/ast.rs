@@ -1,6 +1,81 @@
 use std::fmt::{self, Formatter, Display};
 
 
+fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> String {
+    let indent = "   ".repeat(layer).to_owned();
+    let mut output;
+
+    if include_initial_indent {
+        output = indent.clone();
+
+    } else {
+        output = "".to_owned();
+    }
+
+    match node {
+        Node::Word(val) => {
+            output.push_str(&val);
+        },
+
+
+        Node::Symbol(val) => {
+            output.push_str(&val);
+        },
+
+
+        Node::Float(val) => {
+            output.push_str(&val.to_string());
+        },
+
+
+        Node::Int(val) => {
+            output.push_str(&val.to_string());
+        },
+
+        Node::List(lst) => {
+            output.push_str("(");
+
+            for wrapper in lst {
+                let current = format_node(&wrapper.node, layer + 1, false) + " ";
+
+                output.push_str(&current);
+            }
+
+            output.pop();
+
+            output.push_str(")");
+        },
+
+        Node::Block(lst) => {
+            output.push_str("{\n");
+
+            for wrapper in lst {
+                let current = format_node(&wrapper.node, layer + 1, true) + "\n";
+
+                output.push_str(&current);
+            }
+
+            output.push_str(&(indent + "}"));
+        },
+
+        Node::Invoke{ target, with } => {
+            output.push_str("[");
+            output.push_str(&(target.clone() + "\n"));
+
+            for wrapper in with {
+                let current = format_node(&wrapper.node, layer + 1, true) + "\n";
+
+                output.push_str(&current);
+            }
+
+            output.push_str(&(indent + "]"));
+        },
+    }
+
+    output
+}
+
+
 pub enum Node {
     Word(String),
     Symbol(String),
@@ -18,7 +93,6 @@ pub enum Node {
     }
 }
 
-
 pub struct NodeWrapper {
     pub node: Node,
     pub position: (usize, usize)
@@ -26,55 +100,7 @@ pub struct NodeWrapper {
 
 impl Display for NodeWrapper {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self.node {
-            Node::Word(ref val) => {
-                write!(f, "{}", val)
-            },
-
-            Node::Symbol(ref val) => {
-                write!(f, "{}", val)
-            },
-
-            Node::Float(val) => {
-                write!(f, "{}", val)
-            },
-
-            Node::Int(val) => {
-                write!(f, "{}", val)
-            },
-
-            Node::List(ref elements) => {
-                let mut lst_string: String = "".to_owned();
-
-                for elem in elements {
-                    lst_string.push_str(&format!("{} ", elem));
-                }
-
-                lst_string.pop();
-
-                write!(f, "({})", lst_string)
-            },
-
-            Node::Block(ref invokes) => {
-                let mut lst_string: String = "".to_owned();
-
-                for invoke in invokes {
-                    lst_string.push_str(&format!("{}\n", invoke));
-                }
-
-                write!(f, "{{\n{}}}", lst_string)
-            },
-
-            Node::Invoke { ref target, ref with } => {
-                let mut lst_string: String = "".to_owned();
-
-                for arg in with {
-                    lst_string.push_str(&format!("{}\n", arg));
-                }
-
-                write!(f, "[{}\n{}]", target, lst_string)
-            }
-        }
+        write!(f, "{}", format_node(&self.node, 0, false))
     }
 }
 
