@@ -1,91 +1,65 @@
-extern crate regex;
-use self::regex::Regex;
-
-extern crate unicode_segmentation;
-use self::unicode_segmentation::UnicodeSegmentation;
-
-use parsing::token::Kind;
+use std::collections::HashSet;
 use parsing::token::Token;
-use parsing::token::Because;
-use parsing::token::TokenType;
-use parsing::token::ControlToken::Paren;
-use parsing::token::ControlToken::Brace;
-use parsing::token::ControlToken::Bracket;
 
 
 #[derive(Debug)]
-#[derive(Clone)]
-enum LexerState {
-    Default,
-
-    Reading(TokenType),
-    Building(TokenType),
-
-    Eof(TokenType),
-
-    Undefined
-}
-
-#[derive(Debug)]
-pub struct Lexer<'a> {
+pub struct Lexer<'outer, 'inner> {
     tokens: Vec<Token>,
 
     position: (usize, usize),
     index: usize,
     span: usize,
 
-    state: LexerState,
-    string: Vec<&'a str>,
+    string: Vec<&'outer str>,
+    work_string: &'outer str,
 
-    last_built_token_type: TokenType,
+    special_chars: HashSet<&'inner str>,
 
-    word: Regex,
-    symbol: Regex,
-    float: Regex,
-    int: Regex,
+    symbols: HashSet<&'inner str>,
+    number: HashSet<&'inner str>,
 
-    ws: Regex
+    ws: HashSet<&'inner str>,
 }
 
-impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str, symbol_list: Vec<&str>)
-        -> Lexer<'a> {
+impl<'outer, 'inner> Lexer<'outer, 'inner> {
+    pub fn new(input: Vec<&'outer str>, symbols: HashSet<&'inner str>) -> Lexer<'outer, 'inner> {
+        let mut fused = vec!["[", "]", "{", "}", "{?", "?}", "(", ")", " ", "\n", "\t", "\r"];
+        fused.extend(symbols.iter().cloned());
 
-        let symbol_seq: String = symbol_list.join("");
+        let special_chars: HashSet<&'inner str> = fused.iter().map(|x| &**x).collect();
 
         Lexer {
-            tokens: Vec::new(),
+            tokens: vec![],
 
-            position: (0, 0),
+            position: (1, 1),
             index: 0,
             span: 1,
 
-            state: LexerState::Default,
-            string: UnicodeSegmentation::graphemes(input, true).collect::<Vec<&'a str>>(),
+            special_chars,
 
-            last_built_token_type: TokenType::Undefined(Because::WasNotInitialized),
+            work_string: "",
+            string: input,
 
-            word: Regex::new(&format!(r"^[^ \n\r\t\[\]{{}}(){}]+$", symbol_seq)).unwrap(),
-            symbol: Regex::new(&format!(r"^[{}]$", symbol_seq)).unwrap(),
-            float: Regex::new(r"^[0-9]+\.[0-9]+$").unwrap(),
-            int: Regex::new(r"^[0-9]+$").unwrap(),
+            symbols,
+            number: set!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
 
-            ws: Regex::new(r"^[ \t\n\r]").unwrap()
+            ws: set![" ", "\n", "\t", "\r"],
         }
     }
 
 
-    // [AREA] Position Manipulation
+    // [AREA] Mutating
     //
     fn advance(&mut self, new_span: usize) {
+        self.position.1 += self.span;
+
         self.index += self.span;
         self.span = new_span;
-
-        self.position.1 = self.index;
     }
 
     fn next_line(&mut self) {
-        self.position = (self.position.0 + 1, 0);
+        self.position.0 += 1;
+        self.position.1 = 1;
     }
 
     fn step_forward(&mut self) {
@@ -96,177 +70,186 @@ impl<'a> Lexer<'a> {
         self.span -= 1;
     }
     //
-    // [END] Position Manipulation
+    // [END] Mutating
 
-    fn switch_to(&mut self, new_state: LexerState) {
-        self.state = new_state;
-    }
 
-    // [AREA] String Utilities
+    // [AREA] Copying Fields
     //
-    fn get_workspan(&self) -> String {
-        self.string[self.index .. self.index + self.span].concat()
+    fn get_workspan(&self) -> &[&'outer str] {
+        &self.string[self.index .. self.index + self.span]
     }
 
-    fn get_head(&self) -> &str {
-        self.string[self.index]
+    fn get_current(&self) -> &'outer str {
+        self.string[self.index + self.span - 1]
     }
     //
-    // [END] String Utilities
+    // [END] Copying Fields
 
-    fn try_match(&self) -> TokenType {
-        let workspan = &self.get_workspan();
 
-        if self.word.is_match(workspan) {
-            TokenType::Word
+    // [AREA] Checking Tokens
+    //
+    fn is_space(&self, s: &Vec<&str>) -> bool {
+        s.iter().all(|x| self.ws.contains(x))
+    }
 
-        } else if self.symbol.is_match(workspan) {
-            TokenType::Symbol
+    fn is_word(&self, s: &Vec<&str>) -> bool {
+        s.iter().all(|x| !self.is_special(x))
+    }
 
-        } else if self.float.is_match(workspan) {
-            TokenType::Float
+    fn is_int(&self, s: &Vec<&str>) -> bool {
+        s.iter().all(|x| self.number.contains(x))
+    }
 
-        } else if self.int.is_match(workspan) {
-            TokenType::Int
+    // [NOTE] Returns `true` if the number has decimal point.
+    //
+    fn is_float(&self, s: &Vec<&str>) -> bool {
+        let mut saw_dot = false;
 
-        } else if self.ws.is_match(workspan) {
-            TokenType::Undefined(Because::WasWhitespace)
+        for x in s.iter() {
+            if !self.number.contains(x) && (saw_dot || x.to_owned() != ".") {
+                return false;
 
-        } else {
-            match workspan.as_ref() {
-                "(" => TokenType::Control(Paren(Kind::Left)),
-                ")" => TokenType::Control(Paren(Kind::Right)),
-
-                "[" => TokenType::Control(Bracket(Kind::Left)),
-                "]" => TokenType::Control(Bracket(Kind::Right)),
-
-                "{" => TokenType::Control(Brace(Kind::Left)),
-                "}" => TokenType::Control(Brace(Kind::Right)),
-
-                _ => TokenType::Undefined(Because::DidNotMatch)
+            } else if x.to_owned() == "." {
+                saw_dot = true;
             }
         }
+
+        saw_dot
     }
 
-    fn eat_char(&mut self) {
-        let reached_eof = self.index + self.span == self.string.len();
+    fn is_literal(&self, s: &Vec<&str>) -> bool {
+        let joint = s.join("");
+        let joint_ref: &str = joint.as_ref();
 
-        let new_tt = self.try_match();
-        let state = self.state.clone();
+        self.is_word(s) || self.is_int(s) || self.is_float(s) || self.symbols.contains(joint_ref)
+    }
 
-        match state {
-            LexerState::Default => {
-                match new_tt {
-                    TokenType::Undefined(Because::WasWhitespace) => {
-                        if self.get_head() == "\n" {
-                            self.next_line();
-                        }
+    fn is_special(&self, s: &str) -> bool {
+        match s {
+            _ if self.special_chars.contains(s) => { true },
+            _ => { false },
+        }
+    }
+    //
+    // [END] Checking Tokens
+}
 
-                        self.advance(0);
+impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.index >= self.string.len() {
+                return None;
+            }
+
+            let mut workspan = self.get_workspan().to_vec();
+
+            if self.is_space(&workspan) {
+                let newlines = workspan.iter().cloned().filter(|x| x.to_owned() == "\n").count();
+
+                for _ in 0..newlines {
+                    self.next_line();
+                }
+
+                self.advance(0);
+
+            } else {
+                let joint = workspan.join("");
+
+                let pos = self.position;
+                let index = self.index;
+                let span = self.span;
+
+                match joint.as_ref() {
+                    "[" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("[", pos, index, span));
                     },
 
-                    TokenType::Undefined(Because::DidNotMatch) => {
-                        panic!(format!("Lexer couldn't match ```{}``` at {:?}",
-                            self.get_workspan(), self.position));
+                    "]" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("]", pos, index, span));
                     },
 
-                    TokenType::Control(_) => {
-                        if reached_eof {
-                            self.switch_to(LexerState::Eof(new_tt));
+
+                    "{" => { /* Wait for potential `{?` */ },
+                    "}" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("}", pos, index, span));
+                    },
+
+
+                    "{?" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("{?", pos, index, span));
+                    },
+
+                    "?}" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("?}", pos, index, span));
+                    },
+
+
+                    "(" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control("(", pos, index, span));
+                    },
+
+                    ")" => {
+                        self.advance(1);
+
+                        return Some(Token::new_control(")", pos, index, span));
+                    },
+
+
+                    s => {
+                        if s.starts_with("{") {
+                            self.step_back();
+
+                            self.advance(1);
+
+                            return Some(Token::new_control("{", pos, index, span - 1));
+
+                        } else if self.is_literal(&workspan) {
+                            // [TODO] Maybe do nothing?
 
                         } else {
-                            self.switch_to(LexerState::Building(new_tt));
-                        }
-                    },
+                            workspan.pop();
+                            self.step_back();
 
-                    _ => {
-                        if reached_eof {
-                            self.switch_to(LexerState::Eof(new_tt));
+                            self.advance(1);
 
-                        } else {
-                            self.switch_to(LexerState::Reading(new_tt));
+                            let old_joint = workspan.join("");
+                            let old_s = old_joint.as_ref();
+
+                            if self.symbols.contains(old_s) {
+                                return Some(Token::new_symbol(old_s, pos, index, span - 1));
+
+                            } else if self.is_int(&workspan) {
+                                return Some(Token::new_int(old_s.parse::<i64>().unwrap(), pos, index, span));
+
+                            } else if self.is_float(&workspan) {
+                                return Some(Token::new_float(old_s.parse::<f64>().unwrap(), pos, index, span));
+
+                            } else if self.is_word(&workspan) {
+                                return Some(Token::new_word(old_s, pos, index, span));
+
+                            } else {
+                                panic!("Invalid literal!");
+                            }
                         }
                     }
                 }
-            },
-
-            LexerState::Reading(tt) => {
-                match new_tt {
-                    TokenType::Undefined(_) => {
-                        self.step_back();
-
-                        self.switch_to(LexerState::Building(tt));
-                    },
-
-                    _ => {}
-                }
             }
 
-            LexerState::Building(_) => {
-                panic!("Lexer `eat_char` was called in an invalid state `Building(_)`!");
-            },
-
-            LexerState::Undefined => {
-                panic!("Lexer `eat_char` was called in an invalid state `Undefined`!");
-            },
-
-            LexerState::Eof(_) => {
-                panic!("Lexer `eat_char` called in an invalid state `Eof`!");
-            }
+            self.step_forward();
         }
-    }
-
-    pub fn read_next_token(&mut self) -> Token {
-        let tt;
-
-        loop {
-            self.eat_char();
-
-            match self.state {
-                LexerState::Building(ref built_tt) => {
-                    tt = built_tt.clone();
-
-                    break;
-                },
-
-                LexerState::Undefined => {
-                    panic!("Lexer reached the state `Undefined` while reading token!");
-                },
-
-                LexerState::Eof(ref new_tt) => {
-                    tt = new_tt.clone();
-
-                    break;
-                },
-
-                _ => {
-                    self.step_forward();
-                }
-            }
-        }
-
-        Token::new(tt, self.position, self.span, self.get_workspan())
-    }
-
-    pub fn read_all_tokens(&mut self) -> &Vec<Token> {
-        loop {
-            let new_token = self.read_next_token();
-
-            self.tokens.push(new_token);
-
-            match self.state {
-                LexerState::Eof(_) => {
-                    break;
-                }
-
-                _ => {
-                    self.switch_to(LexerState::Default);
-
-                    self.advance(1);
-                }
-            }
-        }
-
-        &self.tokens
     }
 }

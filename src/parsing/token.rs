@@ -1,73 +1,91 @@
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
-pub enum Because {
-    DidNotMatch,
-    WasWhitespace,
-    WasNotInitialized
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
-pub enum Kind {
-    Left,
-    Right,
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
-pub enum ControlToken {
-    Paren(Kind),
-    Bracket(Kind),
-    Brace(Kind)
-}
-
-#[derive(Debug)]
-#[derive(Clone)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
-    Undefined(Because),
-    Control(ControlToken),
+    Undefined,
+    Control(String),
 
-    Word,
-    Int,
-    Float,
-    Symbol
+    Word(String),
+    Int(i64),
+    Float(f64),
+    Symbol(String)
 }
 
-#[derive(Debug)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenType,
 
     pub position: (usize, usize),
+    pub index: usize,
     pub span: usize,
-
-    pub value: String
 }
 
 impl Token {
     pub fn empty() -> Token {
         Token {
-            kind: TokenType::Undefined(Because::WasNotInitialized),
+            kind: TokenType::Undefined,
 
             position: (0, 0),
+            index: 0,
             span: 0,
-
-            value: String::new()
         }
     }
 
-    pub fn new(kind: TokenType, position: (usize, usize), span: usize, value: String) -> Token {
+    pub fn new_undefined(position: (usize, usize), index: usize, span: usize) -> Token {
         Token {
-            kind,
+            kind: TokenType::Undefined,
 
             position,
+            index,
             span,
+        }
+    }
 
-            value
+    pub fn new_control(sym: &str, position: (usize, usize), index: usize, span: usize) -> Token {
+        Token {
+            kind: TokenType::Control(sym.to_owned()),
+
+            position,
+            index,
+            span,
+        }
+    }
+
+    pub fn new_word(val: &str, position: (usize, usize), index: usize, span: usize) -> Token {
+        Token {
+            kind: TokenType::Word(val.to_owned()),
+
+            position,
+            index,
+            span,
+        }
+    }
+
+    pub fn new_symbol(sym: &str, position: (usize, usize), index: usize, span: usize) -> Token {
+        Token {
+            kind: TokenType::Symbol(sym.to_owned()),
+
+            position,
+            index,
+            span,
+        }
+    }
+
+    pub fn new_int(val: i64, position: (usize, usize), index: usize, span: usize) -> Token {
+        Token {
+            kind: TokenType::Int(val),
+
+            position,
+            index,
+            span,
+        }
+    }
+
+    pub fn new_float(val: f64, position: (usize, usize), index: usize, span: usize) -> Token {
+        Token {
+            kind: TokenType::Float(val),
+
+            position,
+            index,
+            span,
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::fmt::{self, Formatter, Display};
 
 
-fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> String {
+fn format_node(node: &NodeKind, hooks: &Vec<NodeWrapper>, layer: usize, include_initial_indent: bool) -> String {
     let indent = "   ".repeat(layer).to_owned();
     let mut output;
 
@@ -13,30 +13,33 @@ fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> Strin
     }
 
     match node {
-        Node::Word(val) => {
+        NodeKind::Word(val) => {
             output.push_str(&val);
         },
 
 
-        Node::Symbol(val) => {
+        NodeKind::Symbol(val) => {
             output.push_str(&val);
         },
 
 
-        Node::Float(val) => {
+        NodeKind::Float(val) => {
             output.push_str(&val.to_string());
         },
 
 
-        Node::Int(val) => {
+        NodeKind::Int(val) => {
             output.push_str(&val.to_string());
         },
 
-        Node::List(lst) => {
+        NodeKind::List(lst) => {
             output.push_str("(");
 
             for wrapper in lst {
-                let current = format_node(&wrapper.node, layer + 1, false) + " ";
+                let mut inner_hooks = wrapper.hooks.clone();
+                inner_hooks.splice(0..0, hooks.clone());
+
+                let current = format_node(&wrapper.node, &inner_hooks, layer + 1, false) + " ";
 
                 output.push_str(&current);
             }
@@ -46,11 +49,15 @@ fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> Strin
             output.push_str(")");
         },
 
-        Node::Block(lst) => {
-            output.push_str("{\n");
+        NodeKind::Quote{ target, with } => {
+            output.push_str("{");
+            output.push_str(&(target.to_string() + "\n"));
 
-            for wrapper in lst {
-                let current = format_node(&wrapper.node, layer + 1, true) + "\n";
+            for wrapper in with {
+                let mut inner_hooks = wrapper.hooks.clone();
+                inner_hooks.splice(0..0, hooks.clone());
+
+                let current = format_node(&wrapper.node, &inner_hooks, layer + 1, true) + "\n";
 
                 output.push_str(&current);
             }
@@ -58,12 +65,26 @@ fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> Strin
             output.push_str(&(indent + "}"));
         },
 
-        Node::Invoke{ target, with } => {
+        NodeKind::LambdaHook(v_idx) => {
+            let idx = v_idx.clone();
+            let node = &hooks[idx];
+
+            output.push_str("{? ");
+
+            output.push_str(&format_node(&node.node, &vec![], layer + 1, false));// [TODO] Nested hooks?
+
+            output.push_str(" ?}");
+        },
+
+        NodeKind::Invoke{ target, with } => {
             output.push_str("[");
-            output.push_str(&(target.clone() + "\n"));
+            output.push_str(&(target.to_string() + "\n"));
 
             for wrapper in with {
-                let current = format_node(&wrapper.node, layer + 1, true) + "\n";
+                let mut inner_hooks = wrapper.hooks.clone();
+                inner_hooks.splice(0..0, hooks.clone());
+
+                let current = format_node(&wrapper.node, &inner_hooks, layer + 1, true) + "\n";
 
                 output.push_str(&current);
             }
@@ -76,7 +97,8 @@ fn format_node(node: &Node, layer: usize, include_initial_indent: bool) -> Strin
 }
 
 
-pub enum Node {
+#[derive(Clone)]
+pub enum NodeKind {
     Word(String),
     Symbol(String),
 
@@ -85,87 +107,147 @@ pub enum Node {
 
     List(Vec<NodeWrapper>),
 
-    Block(Vec<NodeWrapper>),
+    LambdaHook(usize),
+    Quote{ target: String, with: Vec<NodeWrapper> },
+    Invoke{ target: String, with: Vec<NodeWrapper> },
+}
 
-    Invoke {
-        target: String,
-        with: Vec<NodeWrapper>
+impl Display for NodeKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match &self {
+            NodeKind::Word(_) => write!(f, "Word"),
+            NodeKind::Symbol(_) => write!(f, "Symbol"),
+
+            NodeKind::Float(_) => write!(f, "Float"),
+            NodeKind::Int(_) => write!(f, "Int"),
+
+            NodeKind::List(_) => write!(f, "List"),
+
+            NodeKind::LambdaHook(_) => write!(f, "LambdaHook"),
+            NodeKind::Quote{ target:_, with:_ } => write!(f, "Quote"),
+            NodeKind::Invoke{ target:_, with:_ } => write!(f, "Invoke"),
+        }
     }
 }
 
+
+#[derive(Clone)]
 pub struct NodeWrapper {
-    pub node: Node,
-    pub position: (usize, usize)
+    pub node: NodeKind,
+    pub hooks: Vec<NodeWrapper>,
+
+    pub position: (usize, usize),
+    pub index: usize,
 }
 
 impl Display for NodeWrapper {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", format_node(&self.node, 0, false))
+        write!(f, "{}", format_node(&self.node, &self.hooks, 0, false))
     }
 }
 
-impl<'a> NodeWrapper {
+impl NodeWrapper {
     pub fn empty() -> NodeWrapper {
         NodeWrapper {
-            node: Node::List(Vec::new()),
-            position: (0, 0)
+            node: NodeKind::List(vec![]),
+            hooks: vec![],
+
+            position: (0, 0),
+            index: 0,
         }
     }
 
-    pub fn new_list(elements: Vec<NodeWrapper>, position: (usize, usize)) -> NodeWrapper {
+
+    // [AREA] Structure Nodes
+    //
+    pub fn new_list(elements: Vec<NodeWrapper>, hooks: Vec<NodeWrapper>, index: usize, position: (usize, usize)) -> NodeWrapper {
         NodeWrapper {
-            node: Node::List(elements),
-            position
+            node: NodeKind::List(elements),
+            hooks,
+
+            position,
+            index,
         }
     }
 
-    pub fn new_word(value: String, position: (usize, usize)) -> NodeWrapper {
-        NodeWrapper {
-            node: Node::Word(value),
-            position
-        }
-    }
-
-    pub fn new_symbol(value: String, position: (usize, usize)) -> NodeWrapper {
-        NodeWrapper {
-            node: Node::Symbol(value),
-            position
-        }
-    }
-
-    pub fn new_float(value: &str, position: (usize, usize)) -> NodeWrapper {
-        let f_value = value.parse::<f64>().unwrap();
-
-        NodeWrapper {
-            node: Node::Float(f_value),
-            position
-        }
-    }
-
-    pub fn new_int(value: &str, position: (usize, usize)) -> NodeWrapper {
-        let i_value = value.parse::<i64>().unwrap();
-
-        NodeWrapper {
-            node: Node::Int(i_value),
-            position
-        }
-    }
-
-    pub fn new_invoke(target: String, with: Vec<NodeWrapper>, position: (usize, usize))
+    pub fn new_invoke(target: String, with: Vec<NodeWrapper>, hooks: Vec<NodeWrapper>, index: usize, position: (usize, usize))
         -> NodeWrapper {
 
         NodeWrapper {
-            node: Node::Invoke { target, with },
-            position
+            node: NodeKind::Invoke { target: target.to_owned(), with },
+            hooks,
+
+            position,
+            index,
         }
     }
 
-    pub fn new_block(invokes: Vec<NodeWrapper>, position: (usize, usize))
+    pub fn new_quote(target: String, with: Vec<NodeWrapper>, hooks: Vec<NodeWrapper>, index: usize, position: (usize, usize))
         -> NodeWrapper {
 
         NodeWrapper {
-            node: Node::Block(invokes),
-            position
+            node: NodeKind::Quote { target: target.to_owned(), with },
+            hooks,
+
+            position,
+            index,
         }
     }
+
+    pub fn new_hook(v_idx: usize, hooks: Vec<NodeWrapper>, index: usize, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: NodeKind::LambdaHook(v_idx),
+            hooks,// [NOTE] Not nested hooks, just the contained value.
+
+            position,
+            index,
+        }
+    }
+    //
+    // [END] Structure Nodes
+
+
+    // [AREA] Value Nodes
+    //
+    pub fn new_word(value: String, index: usize, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: NodeKind::Word(value.to_owned()),
+            hooks: vec![],
+
+            position,
+            index,
+        }
+    }
+
+    pub fn new_symbol(value: String, index: usize, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: NodeKind::Symbol(value.to_owned()),
+            hooks: vec![],
+
+            position,
+            index,
+        }
+    }
+
+    pub fn new_float(value: f64, index: usize, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: NodeKind::Float(value),
+            hooks: vec![],
+
+            position,
+            index,
+        }
+    }
+
+    pub fn new_int(value: i64, index: usize, position: (usize, usize)) -> NodeWrapper {
+        NodeWrapper {
+            node: NodeKind::Int(value),
+            hooks: vec![],
+
+            position,
+            index,
+        }
+    }
+    //
+    // [END] Value Node
 }

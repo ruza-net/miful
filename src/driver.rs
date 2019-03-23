@@ -1,17 +1,23 @@
 use parsing;
+use parsing::ast;
+use parsing::token as tok;
+use parsing::utils::{ MifulError, segment_text };
+
+use std::collections::{ HashSet, HashMap };
+
 
 /*
 
 # Miful Default Driver
 
-aka MD2
+    aka MD2
 
 ## Functions
 
-MD2 implements these global functions:
+    MD2 implements these global functions:
 
-* if (value) {block:1} {block:2}
-    > runs {block:1} if (value) returns sym(&) and runs {block:2} otherwise
+* if (value) {quote:1} {quote:2}
+    > runs {quote:1} if (value) returns sym(&) and runs {quote:2} otherwise
     > Example:
         ```
         [if [> [: age] 18] {display [: adult-content]} {display [: denial]}]
@@ -51,52 +57,110 @@ MD2 implements these global functions:
     > performs integer division of (float:1) and (float:2) and returns the remainder
 
 * floor (float)
-    > rounds (float) down
+    > rounds (float) towards negative infinity
 
 * ceil (float)
-    > rounds (float) up
+    > rounds (float) towards infinity
 
 * round (float)
     > rounds (float) to the nearest integer
 
-* let (word) (value) {block}
-    > binds (value) to (word), every call to [: (word)] inside {block} will result into (value)
+* let (word) (value) {quote}
+    > binds (value) to (word), every call to [: (word)] inside {quote} will result into (value)
+    > NOTE: Similar behaviour to an unquoted block {? ... ?}
+    > NOTE: Value can be read multiple times.
 
-* define (word) (list<>)
+* define (word) (list<list<word, (type)>>) {quote}
+    > creates a function binding for (word) with arguments specified in (list<...>),
+    associated with {quote}
+    > NOTE: This binding is valid after this definition (independent of scope).
+    > NOTE: Redefining (shadowing) a function is not prohibited.
+    > NOTE: Argument definition: 2-tuple - 1st element is name, 2nd is type (see ${Type structure})
+
+* undefine (word)
+    > removes a function binding for (word)
+    > NOTE: If (word) doesn't have a binding, throws runtime error.
+
+* split_at (word) (int)
+    > returns a 2-tuple - 1st element is first (int) letters of (word), 2nd is the rest
+    > NOTE: Ignores index overflow
+    > NOTE: Runtime error at negative index
+
+* struct (list<>)
+
+* @ (structure) (word)
+    > returns the associated function named (word) of (structure)
+
+
+## Type structure
+
+    In MD2, types are implemented as behavioural tuples.
+They have this structure:
+
+    ( (internal state constants), (public functions) )
+
+
+## Unquote vs Function Arguments
+
+    They are fundamentally the same, function arguments are syntactic sugar in the same way
+as `let` bindings are.
 
 */
 
 
-pub struct Driver<'a> {
-    parser: parsing::parser::Parser,
-    lexer: parsing::lexer::Lexer<'a>
+pub struct Driver<'a, 'b> {
+    input: &'a str,
+    symbols: HashSet<&'b str>,
+
+    scope: HashMap<String, ast::NodeWrapper>,// [TODO] Inner scopes?
+    functions: HashMap<String, ast::NodeWrapper>,// [TODO] Argument binding
 }
 
-impl<'a> Driver<'a> {
-    pub fn new(input: &'a str) -> Driver<'a> {
-        let symbols = vec![
-            r"&",
-            r"\^",
-            r"~",
-            r"|",
-            r"\\"
-        ];
 
+impl<'a, 'b> Driver<'a, 'b> {
+    pub fn new(input: &'a str) -> Driver<'a, 'b> {
         Driver {
-            parser: parsing::parser::Parser::empty(),
-            lexer: parsing::lexer::Lexer::new(input, symbols)
+            input,
+            symbols: set![":", "@", "&", "|", "#", "~", "?", "\\"],
+
+            scope: HashMap::new(),
+            functions: HashMap::new(),
         }
     }
 
-    pub fn process(&mut self) {
-        let tokens = self.lexer.read_all_tokens();
+    pub fn process(&mut self) -> Result<ast::NodeWrapper, MifulError> {
+        let symbols = self.symbols.clone();
+        let segmented_text = segment_text(self.input);
+        let owned_text = segmented_text.iter().cloned().map(ToOwned::to_owned).collect();
 
-        self.parser = parsing::parser::Parser::new(tokens.to_vec());
+        let lexer = parsing::lexer::Lexer::new(segmented_text, symbols);
+        let tokens: Vec<tok::Token> = lexer.collect();
 
-        let ast = self.parser.construct_tree();
+        let parser = parsing::parser::Parser::new(tokens);
 
-        for node in ast {
-            println!("{}\n", node);
+        let result: Result<Vec<_>, _> = parser.collect();
+
+        match result {
+            Ok(ast) => {
+                self.run(ast)
+            },
+
+            Err(e) => {
+                let mut new_e = e;
+
+                new_e.add_layer_top("..while interpreting the source");
+                new_e.supply_source(&owned_text);
+
+                Err(new_e)
+            }
         }
+    }
+
+    fn run(&mut self, ast: Vec<ast::NodeWrapper>) -> Result<ast::NodeWrapper, MifulError> {
+        for n in ast {
+            println!("{}", n);
+        }
+
+        Ok(ast::NodeWrapper::new_float(3.14, 0, (0, 0)))// [TODO]
     }
 }

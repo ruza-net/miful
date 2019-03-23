@@ -3,156 +3,292 @@ use parsing::ast as ast;
 use parsing::token as tok;
 use self::tok::TokenType as tok_type;
 
-use self::tok::Kind;
-use self::tok::ControlToken::Paren;
-use self::tok::ControlToken::Brace;
-use self::tok::ControlToken::Bracket;
+use parsing::utils::MifulError;
 
-
-fn print_depth(depth: usize) {
-    for _ in 0..depth {
-        print!("|");
-    }
-}
 
 pub struct Parser {
+    index: usize,
+    hook_count: usize,
+
     tokens: Vec<tok::Token>,
-    nodes: Vec<ast::NodeWrapper>
 }
 
 impl Parser {
     pub fn new(tokens: Vec<tok::Token>) -> Parser {
         Parser {
-            tokens,
+            index: 0,
+            hook_count: 0,
 
-            nodes: Vec::new()
+            tokens,
+        }
+    }
+
+    pub fn new_inner(index: usize, hook_count: usize, tokens: Vec<tok::Token>) -> Parser {
+        Parser {
+            index,
+            hook_count,
+
+            tokens,
         }
     }
 
     pub fn empty() -> Parser {
         Parser {
-            tokens: Vec::new(),
-            nodes: Vec::new()
+            index: 0,
+            hook_count: 0,
+
+            tokens: vec![],
         }
     }
 
-    fn get(&self, index: usize) -> tok::Token {
-        self.tokens[index].clone()
+    // [AREA] Utilities
+    //
+    fn step_forward(&mut self) {
+        self.index += 1;
     }
 
-    // Parses a single value
+    fn get(&self) -> tok::Token {
+        self.tokens[self.index].clone()
+    }
+
+    fn get_prev(&self) -> tok::Token {
+        self.tokens[self.index - 1].clone()
+    }
+
+    fn eof(&self) -> bool {
+        self.index >= self.tokens.len()
+    }
     //
-    fn parse_single_value(&mut self, index: usize, depth: usize) -> (ast::NodeWrapper, usize) {
-        let current = self.get(index);
+    // [END] Utilities
+}
 
-        match current.kind {
-            tok_type::Control(Paren(Kind::Left)) => {
-                self.parse_list(index + 1, tok_type::Control(Paren(Kind::Right)), depth)
-            },
 
-            tok_type::Control(Bracket(Kind::Left)) => {
-                self.parse_invoke(index + 1, depth)
-            },
+impl Iterator for Parser {
+    type Item = Result<ast::NodeWrapper, MifulError>;
 
-            tok_type::Control(Brace(Kind::Left)) => {
-                self.parse_block(index + 1, depth)
-            },
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.eof() {
+            None
 
-            tok::TokenType::Word => {
-                (ast::NodeWrapper::new_word(current.value, current.position), index + 1)
-            },
+        } else {
+            let mut hooks = Vec::new();
 
-            tok::TokenType::Symbol => {
-                (ast::NodeWrapper::new_symbol(current.value, current.position), index + 1)
-            },
+            let token = self.get();
+            let mut idx = token.index;
+            let mut pos = token.position;
 
-            tok::TokenType::Float => {
-                (ast::NodeWrapper::new_float(&current.value, current.position), index + 1)
-            },
+            // [TODO] Unquote hooks indexing.
+            //
+            match token.kind {
+                tok_type::Control(s) => {
+                    match s.as_ref() {
+                        "(" => {
+                            let mut values = vec![];
+                            let end_paren = tok_type::Control(")".to_owned());
 
-            tok::TokenType::Int => {
-                (ast::NodeWrapper::new_int(&current.value, current.position), index + 1)
-            },
+                            self.step_forward();
 
-            _ => {
-                panic!(format!("Invalid node ```{:?}``` at {:?}!", current.kind, current.position));
+                            loop {
+                                if self.eof() {
+                                    return Some(Err(MifulError::semantic_error("Unterminated list!", idx, pos)));
+                                }
+
+                                if end_paren == self.get().kind {
+                                    break;
+                                }
+
+                                if let Some(result) = self.next() {
+                                    match result {
+                                        Ok(node) => {
+                                            idx = node.index;
+                                            pos = node.position;
+
+                                            hooks.extend(node.hooks.clone());
+                                            values.push(node);
+                                        },
+
+                                        Err(e) => {
+                                            let mut new_e = e;
+
+                                            new_e.add_layer_top("..while parsing list");
+
+                                            return Some(Err(new_e));
+                                        },
+                                    }
+
+                                } else {
+                                    return Some(Err(MifulError::semantic_error("Unterminated list!", idx, pos)));
+                                }
+                            }
+
+                            self.step_forward();
+
+                            Some(Ok(ast::NodeWrapper::new_list(values, hooks, idx, pos)))
+                        },
+
+                        "[" => {
+                            self.step_forward();
+
+                            if self.eof() {
+                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", idx, pos)))
+                            }
+
+                            let target = self.get().kind;
+
+                            if let tok_type::Word(f_name) | tok_type::Symbol(f_name) = target {
+                                let mut with = vec![];
+
+                                let end_bracket = tok_type::Control("]".to_owned());
+
+                                self.step_forward();
+
+                                loop {
+                                    if self.eof() {
+                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", idx, pos)));
+                                    }
+
+                                    if end_bracket == self.get().kind {
+                                        break;
+                                    }
+
+                                    if let Some(result) = self.next() {
+                                        match result {
+                                            Ok(node) => {
+                                                idx = node.index;
+                                                pos = node.position;
+
+                                                hooks.extend(node.hooks.clone());
+                                                with.push(node);
+                                            },
+
+                                            Err(e) => {
+                                                let mut new_e = e;
+
+                                                new_e.add_layer_top("..while parsing invoke");
+
+                                                return Some(Err(new_e));
+                                            },
+                                        }
+
+                                    } else {
+                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", idx, pos)));
+                                    }
+                                }
+
+                                self.step_forward();
+
+                                Some(Ok(ast::NodeWrapper::new_invoke(f_name, with, hooks, idx, pos)))
+
+                            } else {
+                                Some(Err(MifulError::semantic_error("Invalid function name type!", idx, pos)))
+                            }
+                        },
+
+                        "{" => {
+                            self.step_forward();
+
+                            if self.eof() {
+                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", idx, pos)))
+                            }
+
+                            let target = self.get().kind;
+
+                            if let tok_type::Word(f_name) | tok_type::Symbol(f_name) = target {
+                                let mut with = vec![];
+
+                                let end_brace = tok_type::Control("}".to_owned());
+
+                                self.step_forward();
+
+                                loop {
+                                    if self.eof() {
+                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", idx, pos)));
+                                    }
+
+                                    if end_brace == self.get().kind {
+                                        break;
+                                    }
+
+                                    if let Some(result) = self.next() {
+                                        match result {
+                                            Ok(node) => {
+                                                idx = node.index;
+                                                pos = node.position;
+
+                                                hooks.extend(node.hooks.clone());
+                                                with.push(node);
+                                            },
+
+                                            Err(e) => {
+                                                let mut new_e = e;
+
+                                                new_e.add_layer_top("..while parsing quote");
+
+                                                return Some(Err(new_e));
+                                            },
+                                        }
+
+                                    } else {
+                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", idx, pos)));
+                                    }
+                                }
+
+                                self.step_forward();
+
+                                Some(Ok(ast::NodeWrapper::new_quote(f_name, with, hooks, idx, pos)))
+
+                            } else {
+                                Some(Err(MifulError::semantic_error("Invalid function name type!", idx, pos)))
+                            }
+                        },
+
+                        // [TODO]
+                        //
+                        "{?" => {
+                            self.step_forward();
+
+                            if let Some(result) = self.next() {
+                                match result {
+                                    Ok(node) => {
+                                        idx = node.index;
+                                        pos = node.position;
+
+                                        // [TODO] Nested hooks?
+
+                                        self.step_forward();
+                                        self.hook_count += 1;
+
+                                        Some(Ok(ast::NodeWrapper::new_hook(self.hook_count - 1, vec![node], idx, pos)))
+                                    },
+
+                                    Err(e) => {
+                                        let mut new_e = e;
+
+                                        new_e.add_layer_top("..while parsing unquote");
+
+                                        Some(Err(new_e))
+                                    },
+                                }
+
+                            } else {
+                                Some(Err(MifulError::semantic_error("Unterminated unquote!", idx, pos)))
+                            }
+                        },
+
+                        _ => { Some(Err(MifulError::semantic_error(&format!("Unexpected control token: `{}`!", s), idx, pos))) }
+                    }
+                },
+
+                tok_type::Word(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_word(v, idx, pos))) },
+                tok_type::Symbol(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_symbol(v, idx, pos))) },
+
+                tok_type::Int(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_int(v, idx, pos))) },
+                tok_type::Float(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_float(v, idx, pos))) },
+
+                tok_type::Undefined => {
+                    Some(Err(MifulError::semantic_error("Unexpected token `Undefined`!", idx, pos)))
+                },
             }
         }
-    }
-
-    // Parses a sequence of tokens closed by `end_token`
-    //
-    fn parse_list(&mut self, mut index: usize, end_token: tok::TokenType, depth: usize) -> (ast::NodeWrapper, usize) {
-        let mut elements = Vec::<ast::NodeWrapper>::new();
-
-        loop {
-            if index == self.tokens.len() {
-                panic!(format!("Interminated list at {:?}, expecting {:?}!", self.get(index - 1).position, end_token));
-
-            } else if self.get(index).kind == end_token {
-                break;
-            }
-
-            let (elem, new_index) = self.parse_single_value(index, depth + 1);
-
-            elements.push(elem);
-
-            index = new_index;
-        }
-
-        (ast::NodeWrapper::new_list(elements, self.get(index).position), index + 1)
-    }
-
-    // Parses the invoke structure
-    //
-    fn parse_invoke(&mut self, index: usize, depth: usize) -> (ast::NodeWrapper, usize) {
-        let target = self.get(index);
-
-        let (lst, new_index) =
-            self.parse_list(index + 1, tok_type::Control(Bracket(Kind::Right)), depth);
-
-        let with =
-            match lst.node {
-                ast::Node::List(l) => Some(l),
-                _ => None
-            }.unwrap();
-
-        (ast::NodeWrapper::new_invoke(target.value, with, target.position), new_index)
-    }
-
-    // Parses a block
-    //
-    fn parse_block(&mut self, index: usize, depth: usize) -> (ast::NodeWrapper, usize) {
-        let target = self.get(index);
-
-        let (lst, new_index) =
-            self.parse_list(index, tok_type::Control(Brace(Kind::Right)), depth);
-
-        let invokes =
-            match lst.node {
-                ast::Node::List(l) => Some(l),
-                _ => None
-            }.unwrap();
-
-        (ast::NodeWrapper::new_block(invokes, target.position), new_index)
-    }
-
-
-    pub fn construct_tree(&mut self) -> &Vec<ast::NodeWrapper> {
-        let mut index = 0;
-
-        loop {
-            let (value, new_index) = self.parse_single_value(index, 0);
-
-            self.nodes.push(value);
-
-            index = new_index;
-
-            if index == self.tokens.len() {
-                break;
-            }
-        }
-
-        &self.nodes
     }
 }
