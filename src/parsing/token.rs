@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
-    Undefined,
     Control(String),
 
     Word(String),
@@ -19,25 +18,15 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn empty() -> Token {
-        Token {
-            kind: TokenType::Undefined,
-
-            position: (0, 0),
-            index: 0,
-            span: 0,
-        }
-    }
-
-    pub fn new_undefined(position: (usize, usize), index: usize, span: usize) -> Token {
-        Token {
-            kind: TokenType::Undefined,
-
-            position,
-            index,
-            span,
-        }
-    }
+    // pub fn new_undefined(position: (usize, usize), index: usize, span: usize) -> Token {
+    //     Token {
+    //         kind: TokenType::Undefined,
+    //
+    //         position,
+    //         index,
+    //         span,
+    //     }
+    // }
 
     pub fn new_control(sym: &str, position: (usize, usize), index: usize, span: usize) -> Token {
         Token {

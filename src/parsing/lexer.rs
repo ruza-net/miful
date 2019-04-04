@@ -78,10 +78,6 @@ impl<'outer, 'inner> Lexer<'outer, 'inner> {
     fn get_workspan(&self) -> &[&'outer str] {
         &self.string[self.index .. self.index + self.span]
     }
-
-    fn get_current(&self) -> &'outer str {
-        self.string[self.index + self.span - 1]
-    }
     //
     // [END] Copying Fields
 
@@ -100,7 +96,24 @@ impl<'outer, 'inner> Lexer<'outer, 'inner> {
         s.iter().all(|x| self.number.contains(x))
     }
 
-    // [NOTE] Returns `true` if the number has decimal point.
+    fn is_word_symbol(&self, s: &Vec<&str>) -> bool {
+        if s.len() == 1 {
+            false
+
+        } else if let (Some(fc), Some(lc)) = (s.first(), s.last()) {
+            if fc == &"`" && lc == &"`" {
+                true// [NOTE] Hope that's not problematic...
+
+            } else {
+                false
+            }
+
+        } else {
+            true
+        }
+    }
+
+    // [NOTE] Returns `true` iff the number has decimal point.
     //
     fn is_float(&self, s: &Vec<&str>) -> bool {
         let mut saw_dot = false;
@@ -218,7 +231,7 @@ impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
                             return Some(Token::new_control("{", pos, index, span - 1));
 
                         } else if self.is_literal(&workspan) {
-                            // [TODO] Maybe do nothing?
+                            // [NOTE] Greedily eat literal.
 
                         } else {
                             workspan.pop();
@@ -237,6 +250,13 @@ impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
 
                             } else if self.is_float(&workspan) {
                                 return Some(Token::new_float(old_s.parse::<f64>().unwrap(), pos, index, span));
+
+                            } else if self.is_word_symbol(&workspan) {
+                                let mut window = old_s[1..].to_owned();
+
+                                window.pop();
+
+                                return Some(Token::new_symbol(&window, pos, index, span))
 
                             } else if self.is_word(&workspan) {
                                 return Some(Token::new_word(old_s, pos, index, span));

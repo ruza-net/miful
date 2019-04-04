@@ -8,7 +8,7 @@ I created Miful as a part of my school project, and I intended it to be a script
 
 ## Syntax
 
-Miful is LISP-like. It knows exactly 6 syntax elements:
+Miful is LISP-like. It knows exactly 8 syntax elements:
 
 * word
 * symbol
@@ -16,14 +16,16 @@ Miful is LISP-like. It knows exactly 6 syntax elements:
 * int
 * list *(of any number of any of these types)*
 * function invocation *(with a single name and any number of parameters)*
+* quoted invocation *(with a single name and any number of parameters)*
+* value inside unquote
 
 An example of Miful code would be:
 ```
 [define factorial (num)
-    [if [= num 0]
+    {if [= num 0]
         1
-        [* [factorial [- num 1]] num]
-    ]
+        {* [factorial [- num 1]] num}
+    }
 ]
 ```
 

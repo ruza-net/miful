@@ -44,7 +44,9 @@ fn format_node(node: &NodeKind, hooks: &Vec<NodeWrapper>, layer: usize, include_
                 output.push_str(&current);
             }
 
-            output.pop();
+            if output.len() > 1 {
+                output.pop();
+            }
 
             output.push_str(")");
         },
@@ -97,7 +99,7 @@ fn format_node(node: &NodeKind, hooks: &Vec<NodeWrapper>, layer: usize, include_
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum NodeKind {
     Word(String),
     Symbol(String),
@@ -131,7 +133,7 @@ impl Display for NodeKind {
 }
 
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NodeWrapper {
     pub node: NodeKind,
     pub hooks: Vec<NodeWrapper>,
@@ -250,4 +252,12 @@ impl NodeWrapper {
     }
     //
     // [END] Value Node
+}
+
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum MifulType {
+    Simple(String),//   [NOTE] Covers `quote` and `tuple`, too.
+    Object(String),
+    List(Vec<MifulType>),
 }

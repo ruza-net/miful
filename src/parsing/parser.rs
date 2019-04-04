@@ -23,24 +23,6 @@ impl Parser {
         }
     }
 
-    pub fn new_inner(index: usize, hook_count: usize, tokens: Vec<tok::Token>) -> Parser {
-        Parser {
-            index,
-            hook_count,
-
-            tokens,
-        }
-    }
-
-    pub fn empty() -> Parser {
-        Parser {
-            index: 0,
-            hook_count: 0,
-
-            tokens: vec![],
-        }
-    }
-
     // [AREA] Utilities
     //
     fn step_forward(&mut self) {
@@ -49,10 +31,6 @@ impl Parser {
 
     fn get(&self) -> tok::Token {
         self.tokens[self.index].clone()
-    }
-
-    fn get_prev(&self) -> tok::Token {
-        self.tokens[self.index - 1].clone()
     }
 
     fn eof(&self) -> bool {
@@ -74,7 +52,7 @@ impl Iterator for Parser {
             let mut hooks = Vec::new();
 
             let token = self.get();
-            let mut idx = token.index;
+            let mut last_idx = token.index;
             let mut pos = token.position;
 
             // [TODO] Unquote hooks indexing.
@@ -90,7 +68,7 @@ impl Iterator for Parser {
 
                             loop {
                                 if self.eof() {
-                                    return Some(Err(MifulError::semantic_error("Unterminated list!", idx, pos)));
+                                    return Some(Err(MifulError::semantic_error("Unterminated list!", last_idx, pos)));
                                 }
 
                                 if end_paren == self.get().kind {
@@ -100,7 +78,7 @@ impl Iterator for Parser {
                                 if let Some(result) = self.next() {
                                     match result {
                                         Ok(node) => {
-                                            idx = node.index;
+                                            last_idx = node.index;
                                             pos = node.position;
 
                                             hooks.extend(node.hooks.clone());
@@ -117,23 +95,24 @@ impl Iterator for Parser {
                                     }
 
                                 } else {
-                                    return Some(Err(MifulError::semantic_error("Unterminated list!", idx, pos)));
+                                    return Some(Err(MifulError::semantic_error("Unterminated list!", last_idx, pos)));
                                 }
                             }
 
                             self.step_forward();
 
-                            Some(Ok(ast::NodeWrapper::new_list(values, hooks, idx, pos)))
+                            Some(Ok(ast::NodeWrapper::new_list(values, hooks, token.index, token.position)))
                         },
 
                         "[" => {
                             self.step_forward();
 
                             if self.eof() {
-                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", idx, pos)))
+                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", last_idx, pos)))
                             }
 
-                            let target = self.get().kind;
+                            let name_node = self.get();
+                            let target = name_node.kind;
 
                             if let tok_type::Word(f_name) | tok_type::Symbol(f_name) = target {
                                 let mut with = vec![];
@@ -144,7 +123,7 @@ impl Iterator for Parser {
 
                                 loop {
                                     if self.eof() {
-                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", idx, pos)));
+                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", last_idx, pos)));
                                     }
 
                                     if end_bracket == self.get().kind {
@@ -154,7 +133,7 @@ impl Iterator for Parser {
                                     if let Some(result) = self.next() {
                                         match result {
                                             Ok(node) => {
-                                                idx = node.index;
+                                                last_idx = node.index;
                                                 pos = node.position;
 
                                                 hooks.extend(node.hooks.clone());
@@ -171,16 +150,16 @@ impl Iterator for Parser {
                                         }
 
                                     } else {
-                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", idx, pos)));
+                                        return Some(Err(MifulError::semantic_error("Unterminated invoke!", last_idx, pos)));
                                     }
                                 }
 
                                 self.step_forward();
 
-                                Some(Ok(ast::NodeWrapper::new_invoke(f_name, with, hooks, idx, pos)))
+                                Some(Ok(ast::NodeWrapper::new_invoke(f_name, with, hooks, name_node.index, name_node.position)))
 
                             } else {
-                                Some(Err(MifulError::semantic_error("Invalid function name type!", idx, pos)))
+                                Some(Err(MifulError::semantic_error("Invalid function name type!", last_idx, pos)))
                             }
                         },
 
@@ -188,7 +167,7 @@ impl Iterator for Parser {
                             self.step_forward();
 
                             if self.eof() {
-                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", idx, pos)))
+                                return Some(Err(MifulError::semantic_error("Incomplete invoke!", last_idx, pos)))
                             }
 
                             let target = self.get().kind;
@@ -202,7 +181,7 @@ impl Iterator for Parser {
 
                                 loop {
                                     if self.eof() {
-                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", idx, pos)));
+                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", last_idx, pos)));
                                     }
 
                                     if end_brace == self.get().kind {
@@ -212,7 +191,7 @@ impl Iterator for Parser {
                                     if let Some(result) = self.next() {
                                         match result {
                                             Ok(node) => {
-                                                idx = node.index;
+                                                last_idx = node.index;
                                                 pos = node.position;
 
                                                 hooks.extend(node.hooks.clone());
@@ -229,16 +208,16 @@ impl Iterator for Parser {
                                         }
 
                                     } else {
-                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", idx, pos)));
+                                        return Some(Err(MifulError::semantic_error("Unterminated quote!", last_idx, pos)));
                                     }
                                 }
 
                                 self.step_forward();
 
-                                Some(Ok(ast::NodeWrapper::new_quote(f_name, with, hooks, idx, pos)))
+                                Some(Ok(ast::NodeWrapper::new_quote(f_name, with, hooks, token.index, token.position)))
 
                             } else {
-                                Some(Err(MifulError::semantic_error("Invalid function name type!", idx, pos)))
+                                Some(Err(MifulError::semantic_error("Invalid function name type!", last_idx, pos)))
                             }
                         },
 
@@ -250,7 +229,7 @@ impl Iterator for Parser {
                             if let Some(result) = self.next() {
                                 match result {
                                     Ok(node) => {
-                                        idx = node.index;
+                                        last_idx = node.index;
                                         pos = node.position;
 
                                         // [TODO] Nested hooks?
@@ -258,7 +237,7 @@ impl Iterator for Parser {
                                         self.step_forward();
                                         self.hook_count += 1;
 
-                                        Some(Ok(ast::NodeWrapper::new_hook(self.hook_count - 1, vec![node], idx, pos)))
+                                        Some(Ok(ast::NodeWrapper::new_hook(self.hook_count - 1, vec![node], last_idx, pos)))
                                     },
 
                                     Err(e) => {
@@ -271,23 +250,19 @@ impl Iterator for Parser {
                                 }
 
                             } else {
-                                Some(Err(MifulError::semantic_error("Unterminated unquote!", idx, pos)))
+                                Some(Err(MifulError::semantic_error("Unterminated unquote!", last_idx, pos)))
                             }
                         },
 
-                        _ => { Some(Err(MifulError::semantic_error(&format!("Unexpected control token: `{}`!", s), idx, pos))) }
+                        _ => { Some(Err(MifulError::semantic_error(&format!("Unexpected control token: `{}`!", s), last_idx, pos))) }
                     }
                 },
 
-                tok_type::Word(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_word(v, idx, pos))) },
-                tok_type::Symbol(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_symbol(v, idx, pos))) },
+                tok_type::Word(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_word(v, last_idx, pos))) },
+                tok_type::Symbol(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_symbol(v, last_idx, pos))) },
 
-                tok_type::Int(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_int(v, idx, pos))) },
-                tok_type::Float(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_float(v, idx, pos))) },
-
-                tok_type::Undefined => {
-                    Some(Err(MifulError::semantic_error("Unexpected token `Undefined`!", idx, pos)))
-                },
+                tok_type::Int(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_int(v, last_idx, pos))) },
+                tok_type::Float(v) => { self.step_forward(); Some(Ok(ast::NodeWrapper::new_float(v, last_idx, pos))) },
             }
         }
     }
