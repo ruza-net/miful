@@ -19,6 +19,8 @@ pub struct Lexer<'outer, 'inner> {
     number: HashSet<&'inner str>,
 
     ws: HashSet<&'inner str>,
+
+    keep_ws: bool,
 }
 
 impl<'outer, 'inner> Lexer<'outer, 'inner> {
@@ -44,6 +46,36 @@ impl<'outer, 'inner> Lexer<'outer, 'inner> {
             number: set!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
 
             ws: set![" ", "\n", "\t", "\r"],
+            keep_ws: false,
+        }
+    }
+
+    pub fn new_ws_preserving(input: Vec<&'outer str>, symbols: HashSet<&'inner str>) -> Lexer<'outer, 'inner> {
+        let mut fused = vec!["[", "]", "{", "}", "{?", "?}", "(", ")", " ", "\n", "\t", "\r"];
+        fused.extend(symbols.iter().cloned());
+
+        let special_chars: HashSet<&'inner str> = fused.iter().map(|x| &**x).collect();
+
+        let mut all_symbols = symbols;
+        all_symbols.extend([" ", "\n", "\t", "\r"].iter());
+
+        Lexer {
+            tokens: vec![],
+
+            position: (1, 1),
+            index: 0,
+            span: 1,
+
+            special_chars,
+
+            work_string: "",
+            string: input,
+
+            symbols: all_symbols,
+            number: set!["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"],
+
+            ws: set![" ", "\n", "\t", "\r"],
+            keep_ws: true,
         }
     }
 
@@ -145,6 +177,37 @@ impl<'outer, 'inner> Lexer<'outer, 'inner> {
     }
     //
     // [END] Checking Tokens
+
+    fn process_literal(&self, workspan: Vec<&str>, old_span: usize) -> Token {
+        let old_joint = workspan.join("");
+        let old_s = old_joint.as_ref();
+
+        let pos = self.position;
+        let index = self.index;
+
+        if self.symbols.contains(old_s) {
+            Token::new_symbol(old_s, pos, index, old_span - 1)
+
+        } else if self.is_int(&workspan) {
+            Token::new_int(old_s.parse::<i64>().unwrap(), pos, index, old_span)
+
+        } else if self.is_float(&workspan) {
+            Token::new_float(old_s.parse::<f64>().unwrap(), pos, index, old_span)
+
+        } else if self.is_word_symbol(&workspan) {
+            let mut window = old_s[1..].to_owned();
+
+            window.pop();
+
+            Token::new_symbol(&window, pos, index, old_span)
+
+        } else if self.is_word(&workspan) {
+            Token::new_word(old_s, pos, index, old_span)
+
+        } else {
+            panic!("Invalid literal!");
+        }
+    }
 }
 
 impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
@@ -154,11 +217,14 @@ impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
         loop {
             if self.index >= self.string.len() {
                 return None;
+
+            } else if self.index + self.span > self.string.len() {
+                self.span = self.string.len() - self.index;
             }
 
             let mut workspan = self.get_workspan().to_vec();
 
-            if self.is_space(&workspan) {
+            if !self.keep_ws && self.is_space(&workspan) {
                 let newlines = workspan.iter().cloned().filter(|x| x.to_owned() == "\n").count();
 
                 for _ in 0..newlines {
@@ -175,47 +241,47 @@ impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
                 let span = self.span;
 
                 match joint.as_ref() {
-                    "[" => {
+                    "[" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("[", pos, index, span));
                     },
 
-                    "]" => {
+                    "]" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("]", pos, index, span));
                     },
 
 
-                    "{" => { /* Wait for potential `{?` */ },
-                    "}" => {
+                    "{" if !self.keep_ws => { /* Wait for potential `{?` */ },
+                    "}" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("}", pos, index, span));
                     },
 
 
-                    "{?" => {
+                    "{?" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("{?", pos, index, span));
                     },
 
-                    "?}" => {
+                    "?}" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("?}", pos, index, span));
                     },
 
 
-                    "(" => {
+                    "(" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control("(", pos, index, span));
                     },
 
-                    ")" => {
+                    ")" if !self.keep_ws => {
                         self.advance(1);
 
                         return Some(Token::new_control(")", pos, index, span));
@@ -223,46 +289,56 @@ impl<'outer, 'inner> Iterator for Lexer<'outer, 'inner> {
 
 
                     s => {
-                        if s.starts_with("{") {
-                            self.step_back();
-
-                            self.advance(1);
-
-                            return Some(Token::new_control("{", pos, index, span - 1));
-
-                        } else if self.is_literal(&workspan) {
-                            // [NOTE] Greedily eat literal.
-
-                        } else {
-                            workspan.pop();
-                            self.step_back();
-
-                            self.advance(1);
-
-                            let old_joint = workspan.join("");
-                            let old_s = old_joint.as_ref();
-
-                            if self.symbols.contains(old_s) {
-                                return Some(Token::new_symbol(old_s, pos, index, span - 1));
-
-                            } else if self.is_int(&workspan) {
-                                return Some(Token::new_int(old_s.parse::<i64>().unwrap(), pos, index, span));
-
-                            } else if self.is_float(&workspan) {
-                                return Some(Token::new_float(old_s.parse::<f64>().unwrap(), pos, index, span));
-
-                            } else if self.is_word_symbol(&workspan) {
-                                let mut window = old_s[1..].to_owned();
-
-                                window.pop();
-
-                                return Some(Token::new_symbol(&window, pos, index, span))
-
-                            } else if self.is_word(&workspan) {
-                                return Some(Token::new_word(old_s, pos, index, span));
+                        if self.keep_ws {
+                            if self.is_word(&workspan) {
+                                // [NOTE] Greedily eat word
 
                             } else {
-                                panic!("Invalid literal!");
+                                let mut less_span = workspan.clone();
+
+                                less_span.pop();
+
+                                if less_span.len() > 0 && self.is_word(&less_span) {
+                                    self.step_back();
+                                    self.advance(1);
+
+                                    let joint = less_span.join("");
+
+                                    return Some(Token::new_symbol(&joint, pos, index, span - 1));
+
+                                } else {
+                                    self.advance(1);
+
+                                    let joint = workspan.join("");
+
+                                    return Some(Token::new_symbol(&joint, pos, index, span));
+                                }
+                            }
+
+                        } else {
+                            if s.starts_with("{") {
+                                self.step_back();
+                                self.advance(1);
+
+                                return Some(Token::new_control("{", pos, index, span - 1));
+
+                            } else if self.is_literal(&workspan) {
+                                if self.index + self.span >= self.string.len() {
+                                    self.advance(1);
+
+                                    return Some(self.process_literal(workspan, span));
+
+                                } else {
+                                    // [NOTE] Greedily eat literal.
+                                }
+
+                            } else {
+                                workspan.pop();
+                                self.step_back();
+
+                                self.advance(1);
+
+                                return Some(self.process_literal(workspan, span));
                             }
                         }
                     }

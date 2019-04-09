@@ -1,4 +1,4 @@
-use std::fmt::{self, Formatter, Display};
+use std::fmt::{ self, Formatter, Display };
 
 
 fn format_node(node: &NodeKind, hooks: &Vec<NodeWrapper>, layer: usize, include_initial_indent: bool) -> String {
@@ -255,9 +255,65 @@ impl NodeWrapper {
 }
 
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MifulType {
-    Simple(String),//   [NOTE] Covers `quote` and `tuple`, too.
+    Simple(String),// [NOTE] Covers `quote` and `list`, too.
     Object(String),
-    List(Vec<MifulType>),
+
+    Tuple(Vec<MifulType>),// [NOTE] Checks element count.
+    List(Vec<MifulType>),// [NOTE] Doesn't check element count.
+
+    AnyOf(Vec<MifulType>)
+}
+
+impl Display for MifulType {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match &self {
+            MifulType::Simple(t) => {
+                write!(f, "{}", t)
+            },
+
+            MifulType::Object(t) => {
+                write!(f, "(obj {})", t)
+            },
+
+            MifulType::Tuple(ts) => {
+                let mut s = String::from("(tuple (");
+
+                for t in ts {
+                    s.push_str(&format!("{} ", t));
+                }
+
+                s.pop();
+
+                write!(f, "{}))", s)
+            },
+
+            MifulType::List(ts) => {
+                let mut s = String::from("(list (");
+
+                for t in ts {
+                    s.push_str(&format!("{} ", t));
+                }
+
+                s.pop();
+
+                write!(f, "{}))", s)
+            },
+
+            MifulType::AnyOf(ts) => {
+                let mut s = String::from("(");
+
+                for t in ts {
+                    s.push_str(&format!("{} | ", t));
+                }
+
+                s.pop();
+                s.pop();
+                s.pop();
+
+                write!(f, "{})", s)
+            },
+        }
+    }
 }

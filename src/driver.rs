@@ -1,7 +1,7 @@
 use parsing;
-use parsing::ast::{ NodeWrapper, NodeKind, MifulType };
 use parsing::token as tok;
-use parsing::utils::{ MifulError, segment_text };
+use parsing::ast::{ NodeWrapper, NodeKind, MifulType };
+use parsing::utils::{ MifulError, segment_text, input };
 
 use std::collections::{ HashSet, HashMap };
 
@@ -108,11 +108,11 @@ as `let` bindings are.
 */
 
 
-pub struct Driver<'a, 'b> {
+pub struct Driver<'a> {
     input: &'a str,
-    owned_text: Vec<String>,
 
-    symbols: HashSet<&'b str>,
+    owned_text: Vec<String>,
+    keep_ws: bool,
 
     index: usize,
     ast: Vec<NodeWrapper>,
@@ -132,37 +132,57 @@ pub struct Driver<'a, 'b> {
 }
 
 
-impl<'a, 'b> Driver<'a, 'b> {
-    pub fn new(input: &'a str) -> Driver<'a, 'b> {
+impl<'a> Driver<'a> {
+    pub fn new(input: &'a str) -> Driver<'a> {
         Driver {
             input,
-            owned_text: vec![],
 
-            // [NOTE] `?` and `@` are required to be symbols.
-            //
-            symbols: set![":", "@", "&", "|", "#", "~", "?", "\\"],
+            owned_text: vec![],
+            keep_ws: false,
 
             index: 0,
             ast: vec![],
 
             scope: map!{
-                "space".to_owned() => NodeWrapper::new_symbol(" ".to_owned(), 0, (0, 0)),
-                "tab".to_owned() => NodeWrapper::new_symbol("\t".to_owned(), 0, (0, 0)),
-                "newline".to_owned() => NodeWrapper::new_symbol("\n".to_owned(), 0, (0, 0)),
-                "carriage_ret".to_owned() => NodeWrapper::new_symbol("\r".to_owned(), 0, (0, 0)),
+                String::from("space") => NodeWrapper::new_symbol(" ".to_owned(), 0, (0, 0)),
+                String::from("tab") => NodeWrapper::new_symbol("\t".to_owned(), 0, (0, 0)),
+                String::from("newline") => NodeWrapper::new_symbol("\n".to_owned(), 0, (0, 0)),
+                String::from("carriage_ret") => NodeWrapper::new_symbol("\r".to_owned(), 0, (0, 0)),
+                String::from("l_bracket") => NodeWrapper::new_symbol("[".to_owned(), 0, (0, 0)),
+                String::from("r_bracket") => NodeWrapper::new_symbol("]".to_owned(), 0, (0, 0)),
+                String::from("l_brace") => NodeWrapper::new_symbol("{".to_owned(), 0, (0, 0)),
+                String::from("r_brace") => NodeWrapper::new_symbol("}".to_owned(), 0, (0, 0)),
+                String::from("l_paren") => NodeWrapper::new_symbol("(".to_owned(), 0, (0, 0)),
+                String::from("r_paren") => NodeWrapper::new_symbol(")".to_owned(), 0, (0, 0)),
             },
+
+            functions: map!{},
+        }
+    }
+
+    fn over_input_line(input: &'a str) -> Driver<'a> {
+        Driver {
+            input,
+
+            owned_text: vec![],
+            keep_ws: true,
+
+            index: 0,
+            ast: vec![],
+
+            scope: map!{},
             functions: map!{},
         }
     }
 
     fn over(owned_text: Vec<String>, ast: Vec<NodeWrapper>, scope: HashMap<String, NodeWrapper>,
-        functions: HashMap<(String, Vec<MifulType>), (Vec<String>, NodeWrapper)>) -> Driver<'a, 'b> {
+        functions: HashMap<(String, Vec<MifulType>), (Vec<String>, NodeWrapper)>) -> Driver<'a> {
 
             Driver {
                 input: "",
-                owned_text,
 
-                symbols: set![],
+                owned_text,
+                keep_ws: false,
 
                 index: 0,
                 ast,
@@ -172,36 +192,88 @@ impl<'a, 'b> Driver<'a, 'b> {
             }
     }
 
-    pub fn process(&mut self) -> Result<(), MifulError> {
-        let symbols = self.symbols.clone();
+    pub fn process(&mut self) -> Result<Vec<NodeWrapper>, MifulError> {
+        let symbols = Driver::symbols();
         let segmented_text = segment_text(self.input);
 
         self.owned_text = segmented_text.iter().cloned().map(ToOwned::to_owned).collect();
 
-        let lexer = parsing::lexer::Lexer::new(segmented_text, symbols);
-        let tokens: Vec<tok::Token> = lexer.collect();
+        if self.keep_ws {
+            let lexer = parsing::lexer::Lexer::new_ws_preserving(segmented_text, symbols);
+            let mut tokens: Vec<tok::Token> = lexer.collect();
 
-        let parser = parsing::parser::Parser::new(tokens);
+            tokens.pop();// [NOTE] Drop last newline.
 
-        let result: Result<Vec<_>, _> = parser.collect();
+            let mut nodes = vec![];
 
-        match result {
-            Ok(ast) => {
-                self.ast = ast;
+            for t in tokens {
+                let result: Result<Vec<_>, _> = parsing::parser::Parser::new(vec![t]).collect();
 
-                Ok(())
-            },
+                match result {
+                    Ok(lst) => {
+                        nodes.push(lst[0].clone());
+                    },
 
-            Err(e) => {
-                let mut new_e = e;
+                    Err(e) => {
+                        let mut new_e = e;
 
-                new_e.add_layer_top("..while interpreting the source");
-                new_e.supply_source(&self.owned_text);
+                        new_e.add_layer_top("..while interpreting input line");
+                        new_e.supply_source(&self.owned_text);
 
-                Err(new_e)
+                        return Err(new_e);
+                    },
+                }
+            }
+
+            Ok(nodes)
+
+        } else {
+            let lexer = parsing::lexer::Lexer::new(segmented_text, symbols);
+            let tokens: Vec<tok::Token> = lexer.collect();
+
+            let parser = parsing::parser::Parser::new(tokens);
+            let result: Result<Vec<_>, _> = parser.collect();
+
+            match result {
+                Ok(ast) => {
+                    self.ast = ast.clone();
+
+                    Ok(ast)
+                },
+
+                Err(e) => {
+                    let mut new_e = e;
+
+                    new_e.add_layer_top("..while interpreting the source");
+                    new_e.supply_source(&self.owned_text);
+
+                    Err(new_e)
+                },
             }
         }
     }
+
+    // [AREA] Constant Utils
+    //
+    // [NOTE] Because of Rust's "Fuck you, you can't have a const set"
+    //
+
+    #[inline]
+    fn symbols<'b>() -> HashSet<&'b str> {
+        //
+        // [NOTE] `?` and `@` are required to be symbols.
+
+        set![":", "@", "&", "|", "#", "~", "?", "\\"]
+    }
+
+    #[inline]
+    fn builtin_functions<'b>() -> HashSet<&'b str> {
+        set!["print", "input", "mk-sym", ":", "return", "define", "obj-append", "length", "head",
+        "tail", "reverse", "=", "+", "-", "*", "if"]
+    }
+
+    //
+    // [END] Constant Utils
 
     // [TODO] Nested hooks?
     //
@@ -243,6 +315,15 @@ impl<'a, 'b> Driver<'a, 'b> {
         }
     }
 
+    fn current(&self) -> Option<NodeWrapper> {
+        if self.index < self.ast.len() {
+            Some(self.ast[self.index].clone())
+
+        } else {
+            None
+        }
+    }
+
 
     // [AREA] Error Utils
     //
@@ -259,8 +340,8 @@ impl<'a, 'b> Driver<'a, 'b> {
         new_e
     }
 
-    fn param_type(&self, idx: usize, pos: (usize, usize)) -> MifulError {
-        MifulError::runtime_error("Invalid parameter type!", &self.owned_text, idx, pos)
+    fn param_type(&self, exp_t: &str, idx: usize, pos: (usize, usize)) -> MifulError {
+        MifulError::runtime_error(&format!("Invalid parameter type, expecting ` {} `!", exp_t), &self.owned_text, idx, pos)
     }
 
     fn type_signature(&self, val_node: &NodeWrapper) -> MifulError {
@@ -290,7 +371,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                         NodeKind::Word(_) => { s == "word" },
                         NodeKind::Symbol(_) => { s == "symbol" },
 
-                        NodeKind::List(_) => { s == "tuple" },
+                        NodeKind::List(_) => { s == "list" },
 
                         // [TODO] Maybe add optional check for parameter signature?
                         //
@@ -305,7 +386,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                 self.check_obj_type(&val, class_name)
             },
 
-            MifulType::List(types) => {
+            MifulType::Tuple(types) => {
                 if let NodeKind::List(inner_lst) = val {
                     if types.len() == inner_lst.len() {
                         inner_lst.iter()
@@ -320,6 +401,31 @@ impl<'a, 'b> Driver<'a, 'b> {
                     false
                 }
             },
+
+            MifulType::List(types) => {
+                if let NodeKind::List(inner_lst) = val {
+                    for v in inner_lst {
+                        if types.iter().all(|t| !self.check_type(v, t)) {
+                            return false;
+                        }
+                    }
+
+                    true
+
+                } else {
+                    false
+                }
+            }
+
+            MifulType::AnyOf(types) => {
+                for t in types {
+                    if self.check_type(val_node, t) {
+                        return true;
+                    }
+                }
+
+                false
+            }
         }
     }
 
@@ -328,7 +434,9 @@ impl<'a, 'b> Driver<'a, 'b> {
             if st.len() == 3 {
                 if let NodeKind::Symbol(v) = &st[0].node {
                     if let NodeKind::Word(s) | NodeKind::Symbol(s) = &st[1].node {
-                        return v == "_obj" && s == t;
+                        if let NodeKind::List(_) = &st[2].node {
+                            return v == "_obj" && (t == "any" || s == t);
+                        }
                     }
                 }
             }
@@ -337,68 +445,248 @@ impl<'a, 'b> Driver<'a, 'b> {
         false
     }
 
-    fn make_object(&self, t: String, val: NodeWrapper) -> NodeWrapper {
-        let idx = val.index;
-        let pos = val.position;
+    fn make_object(&self, t: String, lst: Vec<NodeWrapper>, index: usize, position: (usize, usize)) -> NodeWrapper {
+        let obj_sym = NodeWrapper::new_symbol("_obj".to_owned(), index, position);
+        let obj_type = NodeWrapper::new_word(t, index, position);
 
-        let obj_sym = NodeWrapper::new_symbol("_obj".to_owned(), idx, pos);
-        let obj_type = NodeWrapper::new_word(t, idx, pos);
-        let hooks = val.hooks.clone();
+        let mut hooks = vec![];
 
-        NodeWrapper::new_list(vec![obj_sym, obj_type, val], hooks, idx, pos)
+        for t in &lst {
+            hooks.extend(t.hooks.clone());
+        }
+
+        let obj_val = NodeWrapper::new_list(lst, hooks.clone(), index, position);
+
+        NodeWrapper::new_list(vec![obj_sym, obj_type, obj_val], hooks, index, position)
     }
 
     fn make_nil(&self) -> NodeWrapper {
-        self.make_object("nil".to_owned(), NodeWrapper::new_list(vec![], vec![], 0, (0, 0)))
+        self.make_object("nil".to_owned(), vec![], 0, (0, 0))
     }
 
-    fn get_obj_val(&self, obj: &NodeWrapper) -> NodeWrapper {
+    fn make_true(&self) -> NodeWrapper {
+        NodeWrapper::new_symbol("true".to_owned(), 0, (0, 0))
+    }
+
+    fn make_false(&self) -> NodeWrapper {
+        NodeWrapper::new_symbol("false".to_owned(), 0, (0, 0))
+    }
+
+    fn get_obj_val(&self, obj: &NodeWrapper) -> Result<Vec<NodeWrapper>, MifulError> {
         if let NodeKind::List(ref obj_struct) = obj.node {
             if obj_struct.len() == 3 {
-                obj_struct[2].clone()
+                if self.check_obj_type(&obj.node, "any") {
+                    if let NodeKind::List(lst) = &obj_struct[2].node {
+                        Ok(lst.to_vec())
+
+                    } else {
+                        unreachable!();
+                    }// [UNREACHABLE]
+
+                } else {
+                    Err(MifulError::runtime_error("Invalid object structure!", &self.owned_text, obj.index, obj.position))
+                }// [ERR] Invalid object structure
 
             } else {
-                panic!("Invalid object structure size!");
-            }// [PANIC] Invalid object length
+                Err(MifulError::runtime_error("Object structure has invalid length!", &self.owned_text, obj.index, obj.position))
+            }// [Err] Invalid object length
 
         } else {
-            panic!("Invalid object structure kind!");
-        }// [PANIC] Invalid object kind
+            Err(MifulError::runtime_error("Object node is of invalid kind!", &self.owned_text, obj.index, obj.position))
+        }// [Err] Invalid object kind
     }
 
-    // [TODO] Resolve hooks.
-    //
-    fn concat_list(&self, l1: NodeWrapper, l2: NodeWrapper) -> NodeWrapper {
-        if let NodeKind::List(a) = l1.node {
-            if let NodeKind::List(mut b) = l2.node {
-                let mut new_list = a;
+    fn get_obj_type(&self, obj: &NodeWrapper) -> Result<String, MifulError> {
+        if let NodeKind::List(ref obj_struct) = obj.node {
+            if obj_struct.len() == 3 {
+                if self.check_obj_type(&obj.node, "any") {
+                    if let NodeKind::Word(name) | NodeKind::Symbol(name) = &obj_struct[1].node {
+                        Ok(name.to_owned())
 
-                new_list.append(&mut b);
+                    } else {
+                        unreachable!();
+                    }// [UNREACHABLE]
 
-                NodeWrapper::new_list(new_list, vec![], l1.index, l1.position)
+                } else {
+                    Err(MifulError::runtime_error("Invalid object structure!", &self.owned_text, obj.index, obj.position))
+                }// [ERR] Invalid object structure
 
             } else {
-                panic!("Second concat argument is non-list!");
-            }// [PANIC] 2nd parameter is non-list
+                Err(MifulError::runtime_error("Object structure has invalid length!", &self.owned_text, obj.index, obj.position))
+            }// [Err] Invalid object length
 
         } else {
-            panic!("First concat argument is non-list!");
-        }// [PANIC] 1st parameter is non-list
+            Err(MifulError::runtime_error("Object node is of invalid kind!", &self.owned_text, obj.index, obj.position))
+        }// [Err] Invalid object kind
     }
 
-    fn list_to_type(&self, node: &NodeWrapper) -> Result<Vec<MifulType>, MifulError> {
-        if let NodeKind::List(lst) = &node.node {
-            let mut types = vec![];
+    fn obj_append(&self, obj: &NodeWrapper, lst: Vec<NodeWrapper>) -> Result<NodeWrapper, MifulError> {
+        let result_name = self.get_obj_type(obj);
+        let result_val = self.get_obj_val(obj);
 
-            for val in lst {
-                //
+        match result_name {
+            Ok(obj_name) => {
+                match result_val {
+                    Ok(val) => {
+                        let obj_val =
+                            val.iter()
+                                .cloned()
+                                .chain(lst.iter().cloned())
+                                .collect();
+
+                        Ok(self.make_object(obj_name, obj_val, obj.index, obj.position))
+                    },
+
+                    Err(e) => {
+                        let mut new_e = e;
+
+                        new_e.add_layer_top("..while processing object structure");
+
+                        Err(new_e)
+                    },
+                }
+            },
+
+            Err(e) => {
+                let mut new_e = e;
+
+                new_e.add_layer_top("..while processing object name");
+
+                Err(new_e)
+            },
+        }
+    }
+
+    fn list_to_types(&self, lst: &Vec<NodeWrapper>) -> Result<Vec<MifulType>, MifulError> {
+        let mut types = vec![];
+        let mut next_union = false;
+
+        for node in lst {
+            match node.node.clone() {
+                NodeKind::Word(t_name) | NodeKind::Symbol(t_name) => {
+                    if t_name == "|" {
+                        if types.len() == 0 {
+                            return Err(MifulError::runtime_error("Invalid type union syntax!", &self.owned_text, node.index, node.position));
+                        }// [ERR] Union syntax
+
+                        next_union = true;
+
+                        continue;
+
+                    } else {
+                        types.push(MifulType::Simple(t_name));
+                    }
+                },
+
+                NodeKind::List(lst) => {
+                    if lst.len() == 2 {
+                        if let NodeKind::Word(t_name) | NodeKind::Symbol(t_name) = &lst[0].node {
+                            match t_name.as_ref() {
+                                "tuple" => {
+                                    if let NodeKind::List(t_list) = &lst[1].node {
+                                        let result = self.list_to_types(&t_list);
+
+                                        match result {
+                                            Ok(inner_types) => {
+                                                types.push(MifulType::Tuple(inner_types));
+                                            },
+
+                                            Err(e) => {
+                                                let mut new_e = e;
+
+                                                new_e.add_layer_top("..while processing compound type");
+
+                                                return Err(new_e);
+                                            }// [ERR] Processing compound type
+                                        }
+
+                                    } else {
+                                        return Err(self.type_signature(&lst[1]));
+                                    }// [ERR] Type signature
+                                },
+
+                                "list" => {
+                                    if let NodeKind::List(t_list) = &lst[1].node {
+                                        let result = self.list_to_types(&t_list);
+
+                                        match result {
+                                            Ok(inner_types) => {
+                                                types.push(MifulType::List(inner_types));
+                                            },
+
+                                            Err(e) => {
+                                                let mut new_e = e;
+
+                                                new_e.add_layer_top("..while processing compound type");
+
+                                                return Err(new_e);
+                                            }// [ERR] Processing compound type
+                                        }
+
+                                    } else {
+                                        return Err(self.type_signature(&lst[1]));
+                                    }// [ERR] Type signature
+                                },
+
+                                "obj" => {
+                                    if let NodeKind::Word(obj_name) | NodeKind::Symbol(obj_name) = &lst[1].node {
+                                        types.push(MifulType::Object(obj_name.to_owned()));
+
+                                    } else {
+                                        return Err(self.type_signature(&lst[1]));
+                                    }// [ERR] Type signature
+                                },
+
+                                _ => { return Err(self.type_signature(&lst[0])) },
+                            }
+
+                        } else {
+                            return Err(self.type_signature(&node));
+                        }// [ERR] Type signature
+
+                    } else {
+                        let result = self.list_to_types(&lst);
+
+                        match result {
+                            Ok(inner_ts) => {
+                                if inner_ts.len() == 1 {
+                                    types.push(inner_ts[0].clone())
+
+                                } else {
+                                    return Err(self.type_signature(&node));
+                                }// [ERR] Type signature
+                            },
+
+                            Err(e) => {
+                                return Err(e);
+                            },
+                        }
+                    }// [ERR] Type signature
+                },
+
+                _ => { return Err(self.type_signature(&node)); },
             }
 
-            Ok(types)
+            if next_union {
+                next_union = false;
 
-        } else {
-            Err(self.type_signature(node))
+                let last = types.pop().unwrap();
+                let before_last = types.pop().unwrap();
+
+                if let MifulType::AnyOf(lst) = before_last {
+                    let mut new_lst = lst;
+
+                    new_lst.push(last);
+
+                    types.push(MifulType::AnyOf(new_lst));
+
+                } else {
+                    types.push(MifulType::AnyOf(vec![before_last, last]));
+                }
+            }
         }
+
+        Ok(types)
     }
 
     //
@@ -408,55 +696,32 @@ impl<'a, 'b> Driver<'a, 'b> {
     // [AREA] Function Utils
     //
 
-    // [NOTE] This function assumes immutability of `self.scope` in its session.
-    //
     fn print_fn(&self, val: NodeWrapper) -> Result<NodeWrapper, MifulError> {
-        let own_text = self.owned_text.clone();
-        let loc_scope = self.scope.clone();
-        let loc_functions = self.functions.clone();
+        let kind = &val.node;
 
-        let inner_driver = Driver::over(own_text, vec![val.clone()], loc_scope, loc_functions);
-        let result: Result<Vec<_>, _> = inner_driver.collect();
+        if let NodeKind::Word(s) | NodeKind::Symbol(s) = kind {
+            print!("{}", s);
 
-        match result {
-            Ok(ret) => {
-                let node = ret[0].clone();
-                let kind = &node.node;
+            Ok(self.make_nil())
 
-                if let NodeKind::Word(s) | NodeKind::Symbol(s) = kind {
-                    print!("{}", s);
+        } else if self.check_obj_type(kind, "string") {
+            let obj_struct = self.get_obj_val(&val).unwrap();
 
-                    Ok(self.make_nil())
+            for v in obj_struct {
+                match self.print_fn(v) {//[TODO]
+                    Ok(_) => {},
 
-                } else if self.check_obj_type(kind, "string") {
-                    let obj_struct = self.get_obj_val(&node).node;
-
-                    if let NodeKind::List(lst) = obj_struct {
-                        for v in lst {
-                            match self.print_fn(v) {//[TODO]
-                                Ok(_) => {},
-
-                                Err(e) => {
-                                    return Err(self.param_eval(e));
-                                },
-                            }
-                        }
-
-                        Ok(self.make_nil())
-
-                    } else {
-                        panic!("Corrupted object structure!");
-                    }// [PANIC] Corrupt object
-
-                } else {
-                    Err(self.param_type(val.index, val.position))
-                }// [ERR] Parameter type
-            },
-
-            Err(e) => {
-                Err(self.param_eval(e))
+                    Err(e) => {
+                        return Err(self.param_eval(e));
+                    },
+                }
             }
-        }
+
+            Ok(self.make_nil())
+
+        } else {
+            Err(self.param_type("(obj string)", val.index, val.position))
+        }// [ERR] Parameter type
     }
 
     fn args_compatible(&self, exp_args: &Vec<MifulType>, sup_args: &Vec<NodeWrapper>) -> bool {
@@ -474,72 +739,248 @@ impl<'a, 'b> Driver<'a, 'b> {
         }
     }
 
-    fn call_function(&self, name: &str, with: Vec<NodeWrapper>, n: NodeWrapper) -> Result<NodeWrapper, MifulError> {
-        let own_text = self.owned_text.clone();
+    fn choose_function(&self, name: &str, params: Vec<NodeWrapper>, n: &NodeWrapper) -> Result<(HashMap<String, NodeWrapper>, NodeWrapper), MifulError> {
+        let mut available = vec![];
 
-        // Process given arguments.
+        for ((f_name, exp_args), (arg_names, body_invoke)) in &self.functions {
+            if name == f_name {
+                if self.args_compatible(exp_args, &params) {
+                    let args = arg_names.iter()
+                        .cloned()
+                        .zip(params.iter().cloned())
+                        .collect();
+
+                    return Ok((args, body_invoke.clone()));
+
+                } else {
+                    let mut af = format!("{} :: ", f_name);
+
+                    for t in exp_args {
+                        af.push_str(&format!("{}, ", t));
+                    }
+
+                    af.pop();
+                    af.pop();
+
+                    if exp_args.len() == 0 {
+                        af.pop();
+                        af.pop();
+                    }
+
+                    available.push(af);
+                }// Extending available functions
+            }
+        }
+
+        // [TODO] Maybe print given parameter types?
         //
-        let inner_driver = Driver::over(own_text.clone(), with, self.scope.clone(), self.functions.clone());
-        let result: Result<Vec<_>, _> = inner_driver.collect();
+        Err(MifulError::runtime_error(
+            &format!("Did not find function ` {} ` with desired parameter types.\n\t[NOTE] Following are available:\n\t{}",
+                name,
+                available.join("\n\t")),
+            &self.owned_text,
+            n.index,
+            n.position
+        ))
+    }
+
+    fn call_function(&self, name: &str, params: Vec<NodeWrapper>, n: &NodeWrapper) -> Result<NodeWrapper, MifulError> {
+        let result = self.choose_function(name, params, n);
 
         match result {
-            Ok(params) => {
-                for ((f_name, exp_args), (arg_names, body_quote)) in &self.functions {
-                    if name == f_name && self.args_compatible(exp_args, &params) {
-                        let inner_scope =
-                            arg_names.iter()
-                                .cloned()
-                                .zip(params.iter().cloned())
-                                .collect();
+            Ok((args, body)) => {
+                let mut loc_scope = self.scope.clone();
 
-                        // [TODO] Local functions?
-                        // (from the scope of the function declaration)
-                        //
-                        // [IDEA] Maybe insert the outer function body when processing quote.
-                        //
-                        let call_driver = Driver::over(own_text, vec![body_quote.clone()], inner_scope, map!{});
-                        let call_result: Result<Vec<_>, _> = call_driver.collect();
+                loc_scope.extend(args);
 
-                        match call_result {
+                // [TODO] Local functions?
+                // (from the scope of the function declaration)
+                //
+                // [IDEA] Maybe insert the outer function body when processing quote.
+                //
+                let call_driver = Driver::over(self.owned_text.clone(), vec![body.clone()], loc_scope, self.functions.clone());
+                let call_result: Result<Vec<_>, _> = call_driver.collect();
+
+                match call_result {
+                    Ok(ret) => {
+                        return Ok(ret[0].clone());
+                    },
+
+                    Err(e) => {
+                        let mut new_e = e;
+
+                        new_e.add_layer_top(&format!("..while calling function {}", name));
+
+                        return Err(new_e);
+                    },
+                }
+            },
+
+            Err(e) => {
+                Err(e)
+            },
+        }
+    }
+
+    fn define_function(&mut self, name: &str, raw_signature: Vec<NodeWrapper>, body: NodeWrapper) -> Result<NodeWrapper, MifulError> {
+        //
+        // [NOTE] `body` is already converted from quote to invoke.
+
+        if !Driver::builtin_functions().contains(name) {
+            let mut names = vec![];
+            let mut raw_types = vec![];
+
+            for raw_arg in raw_signature {
+                if let NodeKind::List(raw_pair) = &raw_arg.node {
+                    if raw_pair.len() == 2 {
+                        if let NodeKind::Word(name) | NodeKind::Symbol(name) = &raw_pair[0].node {
+                            names.push(name.to_owned());
+                            raw_types.push(raw_pair[1].clone());
+
+                        } else {
+                            return Err(self.type_signature(&raw_pair[0]));
+                        }// [ERR] Type signature
+
+                    } else {
+                        return Err(self.type_signature(&raw_arg));
+                    }// [ERR] Type signature
+
+                } else {
+                    return Err(self.type_signature(&raw_arg));
+                }// [ERR] Type signature
+            }
+
+            match self.list_to_types(&raw_types) {
+                Ok(types) => {
+                    // let result = self.inline_invokes(&body);
+                    //
+                    // match result {
+                    //     Ok(processed_body) => {
+                    //         self.functions.insert((name.to_owned(), types), (names, processed_body));
+                    //
+                    //         Ok(self.make_nil())
+                    //     },
+                    //
+                    //     Err(e) => {
+                    //         let mut new_e = e;
+                    //
+                    //         new_e.add_layer_top("..while defining function");
+                    //
+                    //         Err(new_e)
+                    //     }// [ERR] While defining function
+                    // }
+
+                    self.functions.insert((name.to_owned(), types), (names, body));
+
+                    Ok(self.make_nil())
+                },
+
+                Err(e) => {
+                    let mut new_e = e;
+
+                    new_e.add_layer_top("..while defining function");
+
+                    Err(new_e)
+                }// [ERR] Function definition
+            }
+
+        } else {
+            let current = self.current().unwrap();
+
+            return Err(MifulError::runtime_error("Cannot override built-in function!", &self.owned_text, current.index, current.position))
+        }// [ERR] Built-in override
+    }
+
+    fn values_equal(&self, v1: &NodeWrapper, v2: &NodeWrapper) -> Result<NodeWrapper, MifulError> {
+        let current = self.current().unwrap();
+
+        match (&v1.node, &v2.node) {
+            (NodeKind::Int(i1), NodeKind::Int(i2)) => {
+                if i1 == i2 {
+                    Ok(self.make_true())
+
+                } else {
+                    Ok(self.make_false())
+                }
+            },
+
+            (NodeKind::Float(f1), NodeKind::Float(f2)) => {
+                if f1 == f2 {
+                    Ok(self.make_true())
+
+                } else {
+                    Ok(self.make_false())
+                }
+            },
+
+            (NodeKind::Word(w1), NodeKind::Word(w2)) => {
+                if w1 == w2 {
+                    Ok(self.make_true())
+
+                } else {
+                    Ok(self.make_false())
+                }
+            },
+
+            (NodeKind::Symbol(s1), NodeKind::Symbol(s2)) => {
+                if s1 == s2 {
+                    Ok(self.make_true())
+
+                } else {
+                    Ok(self.make_false())
+                }
+            },
+
+            (NodeKind::List(l1), NodeKind::List(l2)) => {
+                if l1.len() == l2.len() {
+                    for (a, b) in l1.iter().zip(l2.iter()) {
+                        let result = self.values_equal(a, b);
+
+                        match result {
                             Ok(ret) => {
-                                return Ok(ret[0].clone());
+                                if let NodeKind::Symbol(b) = ret.node {
+                                    if b == "false" {
+                                        return Ok(self.make_false());
+                                    }
+
+                                } else {
+                                    unreachable!();
+                                }// [UNREACHABLE]
                             },
 
                             Err(e) => {
                                 let mut new_e = e;
 
-                                new_e.add_layer_top(&format!("..while calling function {}", name));
+                                new_e.add_layer_top("..while checking list equality");
 
                                 return Err(new_e);
-                            },
+                            }// [ERR] While checking list equality
                         }
                     }
+
+                    Ok(self.make_true())
+
+                } else {
+                    Ok(self.make_false())
                 }
-
-                // [TODO] Maybe print the given types?
-                //
-                Err(MifulError::runtime_error(&format!("Did not find function ` {} ` with desired parameter types!", name), &own_text, n.index, n.position))
             },
 
-            Err(e) => {
-                Err(self.param_eval(e))
-            },
-        }
-    }
+            (NodeKind::LambdaHook(i1), NodeKind::LambdaHook(i2)) => {
+                if i1 == i2 {
+                    Ok(self.make_true())
 
-    fn define_function(&self, name: &str, raw_signature: NodeWrapper, body: NodeWrapper) -> Result<NodeWrapper, MifulError> {
-        match self.list_to_type(&raw_signature) {
-            Ok(lst) => {
-                //
+                } else {
+                    Ok(self.make_false())
+                }
             },
 
-            Err(e) => {
-                let mut new_e = e;
+            (NodeKind::Invoke{ target: _, with: _ }, _) => { panic!("[values_equal] Unprocessed node!"); },
+            (_, NodeKind::Invoke{ target: _, with: _ }) => { panic!("[values_equal] Unprocessed node!"); },
 
-                new_e.add_layer_top("..while defining function");
+            (NodeKind::Quote{ target: _, with: _ }, _) => { Err(MifulError::runtime_error("Can't check equality of quote!", &self.owned_text, current.index, current.position)) },
+            (_, NodeKind::Quote{ target: _, with: _ }) => { Err(MifulError::runtime_error("Can't check equality of quote!", &self.owned_text, current.index, current.position)) },
 
-                Err(new_e)
-            }
+            _ => { Ok(self.make_false()) }
         }
     }
 
@@ -548,7 +989,7 @@ impl<'a, 'b> Driver<'a, 'b> {
 }
 
 
-impl<'a, 'b> Iterator for Driver<'a, 'a> {
+impl<'a> Iterator for Driver<'a> {
     type Item = Result<NodeWrapper, MifulError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -562,8 +1003,8 @@ impl<'a, 'b> Iterator for Driver<'a, 'a> {
             let hooks = n.hooks.clone();
 
             let own_text = self.owned_text.clone();
-            let mut loc_scope = self.scope.clone();
-            let mut loc_functions = self.functions.clone();
+            let loc_scope = self.scope.clone();
+            let loc_functions = self.functions.clone();
 
             self.index += 1;
 
@@ -596,64 +1037,93 @@ impl<'a, 'b> Iterator for Driver<'a, 'a> {
                 // [TODO] Hooks
                 //
                 NodeKind::Invoke{ target, with } => {
-                    match target.as_ref() {
-                        "print" => {
-                            //
-                            // Prints (word:1) or (symbol:1) or ((obj string):1)
+                    let inner_driver = Driver::over(own_text, with.to_vec(), loc_scope, loc_functions);
+                    let result: Result<Vec<_>, _> = inner_driver.collect();
 
-                            if with.len() == 1 {
-                                Some(self.print_fn(with[0].clone()))
+                    match result {
+                        Ok(args) => {
+                            match target.as_ref() {
+                                "print" => {
+                                    //
+                                    // Prints (word:1) or (symbol:1) or ((obj string):1)
 
-                            } else {
-                                Some(Err(self.invalid_param_count(1, with.len(), n)))
-                            }// [ERR] Parameter count
-                        },
+                                    if args.len() == 1 {
+                                        Some(self.print_fn(args[0].clone()))
 
-                        "mk-sym" => {
-                            //
-                            // Creates a symbol from (word:1)
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
 
-                            if with.len() == 1 {
-                                let inner_driver = Driver::over(own_text, with.to_vec(), loc_scope, loc_functions);
-                                let result: Result<Vec<_>, _> = inner_driver.collect();
+                                "input" => {
+                                    //
+                                    // Prints (printable:1), reads line from stdin, and returns it as (obj string)
 
-                                match result {
-                                    Ok(ret) => {
-                                        let ret_node = &ret[0];
+                                    if args.len() == 1 {
+                                        let result = self.print_fn(args[0].clone());
 
-                                        if let NodeKind::Word(w) = ret_node.node {
+                                        match result {
+                                            Ok(_v) => {
+                                                let read_line = input();
+
+                                                let line_result = Driver::over_input_line(&read_line).process();
+
+                                                match line_result {
+                                                    Ok(node_lst) => {
+                                                        Some(Ok(self.make_object("string".to_owned(), node_lst, n.index, n.position)))
+                                                    },
+
+                                                    Err(e) => {
+                                                        Some(Err(e))
+                                                    }
+                                                }
+                                            },
+
+                                            Err(e) => {
+                                                Some(Err(e))
+                                            },
+                                        }
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "mk-sym" => {
+                                    //
+                                    // Creates a symbol from (word:1)
+                                    //
+                                    // [NOTE] Synonymous with `(word:1)`
+
+                                    if args.len() == 1 {
+                                        if let NodeKind::Word(w) = &args[0].node {
                                             Some(Ok(NodeWrapper::new_symbol(w.to_owned(), n.index, n.position)))
 
+                                        } else if let NodeKind::Int(i) = &args[0].node {
+                                            Some(Ok(NodeWrapper::new_symbol(i.to_string(), n.index, n.position)))
+
+                                        } else if let NodeKind::Float(f) = &args[0].node {
+                                            Some(Ok(NodeWrapper::new_symbol(f.to_string(), n.index, n.position)))
+
                                         } else {
-                                            Some(Err(self.param_type(ret_node.index, ret_node.position)))
+                                            Some(Err(self.param_type("word", args[0].index, args[0].position)))
                                         }// [ERR] Parameter type
-                                    },
 
-                                    Err(e) => {
-                                        Some(Err(self.param_eval(e)))
-                                    }
-                                }
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
 
-                            } else {
-                                Some(Err(self.invalid_param_count(1, with.len(), n)))
-                            }// [ERR] Parameter count
-                        }
+                                // "export" => {
+                                //     //
+                                // },
 
-                        // "export" => {
-                        //     //
-                        // },
+                                ":" => {
+                                    //
+                                    // Returns the value in scope under the name of (word:1)
 
-                        ":" => {
-                            //
-                            // Returns the value in scope under the name of (word:1)
-
-                            if with.len() == 1 {
-                                let inner_driver = Driver::over(own_text, with.to_vec(), loc_scope, loc_functions);
-                                let result: Result<Vec<_>, _> = inner_driver.collect();
-
-                                match result {
-                                    Ok(ret) => {
-                                        if let NodeKind::Word(v) | NodeKind::Symbol(v) = &ret[0].node {
+                                    if args.len() == 1 {
+                                        if let NodeKind::Word(v) | NodeKind::Symbol(v) = &args[0].node {
                                             if let Some(val) = self.scope.get(v) {
                                                 Some(Ok(val.clone()))
 
@@ -662,53 +1132,374 @@ impl<'a, 'b> Iterator for Driver<'a, 'a> {
                                             }// [ERR] Undefined constant
 
                                         } else {
-                                            Some(Err(self.param_type(n.index, n.position)))
+                                            Some(Err(self.param_type("(word | symbol)", n.index, n.position)))
                                         }// [ERR] Parameter type
-                                    },
-
-                                    Err(e) => {
-                                        Some(Err(self.param_eval(e)))
-                                    },
-                                }
-
-                            } else {
-                                Some(Err(self.invalid_param_count(1, with.len(), n)))
-                            }// [ERR] Parameter count
-                        },
-
-                        "define" => {
-                            //
-                            // Adds to the function scope a new function with the name (word:1),
-                            // parameter signature ((tuple *(tuple (word, type))):2),
-                            // and body (quote:3)
-
-                            if with.len() == 3 {
-                                let raw_1 = with[0];
-                                let raw_signature = with[1];
-                                let raw_3 = with[2];
-
-                                if let NodeKind::Word(def_name) | NodeKind::Symbol(def_name) = raw_1.node {
-                                    if let NodeKind::Quote{ target, with: params } = raw_3.node {
-                                        let body_invoke = NodeWrapper::new_invoke(target, params, raw_3.hooks, raw_3.index, raw_3.position);
-
-                                        Some(self.define_function(&def_name, raw_signature, body_invoke))
 
                                     } else {
-                                        Some(Err(self.param_type(raw_3.index, raw_3.position)))
-                                    }// [ERR] Parameter type
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
 
-                                } else {
-                                    Some(Err(self.param_type(raw_1.index, raw_1.position)))
-                                }// [ERR] Parameter type
+                                "=" => {
+                                    //
+                                    // Returns whether (val:1) and (val:2) are equal.
 
-                            } else {
-                                Some(Err(self.invalid_param_count(3, with.len(), n)))
-                            }// [ERR] Parameter count
+                                    if args.len() == 2 {
+                                        Some(self.values_equal(&args[0], &args[1]))
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                // [TODO] Hooks
+                                //
+                                "+" => {
+                                    //
+                                    // Returns (int:1) + (int:2), (float:1) + (float:2),
+                                    // or is synonymous with [obj-append [:obj1] [obj-unwrap [:obj2]]],
+                                    // where (obj:1) and (obj:2) are of the same type.
+
+                                    if args.len() == 2 {
+                                        let a = &args[0];
+                                        let b = &args[1];
+
+                                        match (&a.node, &b.node) {
+                                            (NodeKind::Int(i1), NodeKind::Int(i2)) => {
+                                                Some(Ok(NodeWrapper::new_int(i1 + i2, n.index, n.position)))
+                                            },
+
+                                            (NodeKind::Float(f1), NodeKind::Float(f2)) => {
+                                                Some(Ok(NodeWrapper::new_float(f1 + f2, n.index, n.position)))
+                                            },
+
+                                            (NodeKind::List(l1), NodeKind::List(l2)) => {
+                                                if self.check_obj_type(&a.node, "any")
+                                                    && self.check_obj_type(&b.node, "any") {
+
+                                                    let t1 = self.get_obj_type(&l1[1]).unwrap();
+                                                    let t2 = self.get_obj_type(&l2[1]).unwrap();
+
+                                                    if t1 == t2 {
+                                                        Some(Ok(self.obj_append(a, l2.to_vec()).unwrap()))
+
+                                                    } else {
+                                                        Some(Err(MifulError::runtime_error("Can't concat two different objects!", &self.owned_text, n.index, n.position)))
+                                                    }// [ERR] Different objects concat
+
+                                                } else {
+                                                    let mut new_l = l1.clone();
+                                                    let mut new_hooks = a.hooks.clone();
+
+                                                    new_l.append(&mut l2.clone());
+                                                    new_hooks.append(&mut b.hooks.clone());
+
+                                                    Some(Ok(NodeWrapper::new_list(new_l, new_hooks, n.index, n.position)))
+                                                }
+                                            },
+
+                                            _ => {
+                                                Some(Err(self.param_type("(int | float | (obj any) | list)", b.index, b.position)))
+                                            }// [ERR] Parameter type
+                                        }
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "-" => {
+                                    //
+                                    // Returns (int:1) - (int:2) or (float:1) - (float:2).
+
+                                    if args.len() == 2 {
+                                        let a = &args[0];
+                                        let b = &args[1];
+
+                                        match (&a.node, &b.node) {
+                                            (NodeKind::Int(i1), NodeKind::Int(i2)) => {
+                                                Some(Ok(NodeWrapper::new_int(i1 - i2, n.index, n.position)))
+                                            },
+
+                                            (NodeKind::Float(f1), NodeKind::Float(f2)) => {
+                                                Some(Ok(NodeWrapper::new_float(f1 - f2, n.index, n.position)))
+                                            },
+
+                                            _ => {
+                                                Some(Err(self.param_type("(int | float)", b.index, b.position)))
+                                            }// [ERR] Parameter type
+                                        }
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "*" => {
+                                    //
+                                    // Returns (int:1) * (int:2), (float:1) * (float:2).
+
+                                    if args.len() == 2 {
+                                        let a = &args[0];
+                                        let b = &args[1];
+
+                                        match (&a.node, &b.node) {
+                                            (NodeKind::Int(i1), NodeKind::Int(i2)) => {
+                                                Some(Ok(NodeWrapper::new_int(i1 * i2, n.index, n.position)))
+                                            },
+
+                                            (NodeKind::Float(f1), NodeKind::Float(f2)) => {
+                                                Some(Ok(NodeWrapper::new_float(f1 * f2, n.index, n.position)))
+                                            },
+
+                                            _ => {
+                                                Some(Err(self.param_type("(int | float)", b.index, b.position)))
+                                            }// [ERR] Parameter type
+                                        }
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "if" => {
+                                    //
+                                    // Runs (quote:2) when (value:1) is `true`, or runs (quote:3) otherwise.
+
+                                    if args.len() == 3 {
+                                        let cond_node = &args[0];
+                                        let true_node = &args[1];
+                                        let false_node = &args[2];
+
+                                        if let NodeKind::Quote{ target: t_target, with: t_with } = &true_node.node {
+                                            if let NodeKind::Quote{ target: f_target, with: f_with } = &false_node.node {
+                                                if let NodeKind::Symbol(s) = &cond_node.node {
+                                                    if s == "true" {
+                                                        let t_invoke = NodeWrapper::new_invoke(t_target.to_string(),
+                                                            t_with.to_vec(), true_node.hooks.clone(), true_node.index, true_node.position);
+
+                                                        let inner_driver = Driver::over(self.owned_text.clone(), vec![t_invoke], self.scope.clone(), self.functions.clone());
+                                                        let arg_result: Result<Vec<_>, _> = inner_driver.collect();
+
+                                                        match arg_result {
+                                                            Ok(ret) => {
+                                                                return Some(Ok(ret[0].clone()));
+                                                            },
+
+                                                            Err(e) => {
+                                                                let mut new_e = e;
+
+                                                                new_e.add_layer_top("..while evaluating parameters");
+
+                                                                return Some(Err(new_e));
+                                                            }// [ERR] While param eval
+                                                        }
+                                                    }
+                                                }
+
+                                                let f_invoke = NodeWrapper::new_invoke(f_target.to_string(),
+                                                    f_with.to_vec(), false_node.hooks.clone(), false_node.index, false_node.position);
+
+                                                let inner_driver = Driver::over(self.owned_text.clone(), vec![f_invoke], self.scope.clone(), self.functions.clone());
+                                                let arg_result: Result<Vec<_>, _> = inner_driver.collect();
+
+                                                match arg_result {
+                                                    Ok(ret) => {
+                                                        return Some(Ok(ret[0].clone()));
+                                                    },
+
+                                                    Err(e) => {
+                                                        let mut new_e = e;
+
+                                                        new_e.add_layer_top("..while evaluating parameters");
+
+                                                        return Some(Err(new_e));
+                                                    }// [ERR] While param eval
+                                                }
+
+                                            } else {
+                                                Some(Err(self.param_type("quote", true_node.index, false_node.position)))
+                                            }// [ERR] Parameter type
+
+                                        } else {
+                                            Some(Err(self.param_type("quote", true_node.index, true_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(3, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "return" => {
+                                    //
+                                    // Returns the given (value:1)
+
+                                    if args.len() == 1 {
+                                        Some(Ok(args[0].clone()))
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "define" => {
+                                    //
+                                    // Adds to the function scope a new function with the name (word:1),
+                                    // parameter signature ((tuple *(tuple (word, type))):2),
+                                    // and body (quote:3).
+
+                                    if with.len() == 3 {
+                                        let raw_1 = &args[0];
+                                        let raw_2 = &args[1];
+                                        let raw_3 = &args[2];// [TODO] Substitute into locally defined functions
+
+                                        if let NodeKind::Word(def_name) | NodeKind::Symbol(def_name) = &raw_1.node {
+                                            if let NodeKind::List(raw_lst) = &raw_2.node {
+                                                if let NodeKind::Quote{ target, with: params } = &raw_3.node {
+                                                    let body_invoke = NodeWrapper::new_invoke(target.to_owned(), params.to_vec(), raw_3.hooks.clone(), raw_3.index, raw_3.position);
+
+                                                    Some(self.define_function(&def_name, raw_lst.to_vec(), body_invoke))
+
+                                                } else {
+                                                    Some(Err(self.param_type("quote", raw_3.index, raw_3.position)))
+                                                }// [ERR] 3rd parameter type
+
+                                            } else {
+                                                Some(Err(self.param_type("(list *(list (word type)))", raw_2.index, raw_2.position)))
+                                            }// [ERR] 2nd parameter type
+
+                                        } else {
+                                            Some(Err(self.param_type("(word | symbol)", raw_1.index, raw_1.position)))
+                                        }// [ERR] 1st parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(3, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "obj-append" => {
+                                    //
+                                    // Appends (list:2) to the contents of (obj:1)
+
+                                    if args.len() == 2 {
+                                        let obj = &args[0];
+                                        let lst_node = &args[1];
+
+                                        if let NodeKind::List(lst) = &lst_node.node {
+                                            Some(self.obj_append(obj, lst.to_vec()))
+
+                                        } else {
+                                            Some(Err(self.param_type("list", lst_node.index, lst_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(2, with.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "length" => {
+                                    //
+                                    // Returns (int), which is the length of (tuple:1)
+
+                                    if args.len() == 1 {
+                                        let lst_node = &args[0];
+
+                                        if let NodeKind::List(lst) = &lst_node.node {
+                                            Some(Ok(NodeWrapper::new_int(lst.len() as i64, n.index, n.position)))
+
+                                        } else {
+                                            Some(Err(self.param_type("(list (any))", lst_node.index, lst_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "head" => {
+                                    //
+                                    // Returns the first element of (list:1)
+
+                                    if args.len() == 1 {
+                                        let lst_node = &args[0];
+
+                                        if let NodeKind::List(lst) = &lst_node.node {
+                                            if lst.len() > 0 {
+                                                Some(Ok(lst[0].clone()))
+
+                                            } else {
+                                                Some(Err(MifulError::runtime_error("Cannot get head of empty tuple!", &self.owned_text, lst_node.index, lst_node.position)))
+                                            }// [ERR] Head of empty tuple
+
+                                        } else {
+                                            Some(Err(self.param_type("(list (any))", lst_node.index, lst_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                // [TODO] Resolve hooks (distribution between head and tail + indexing)
+                                //
+                                "tail" => {
+                                    //
+                                    // Returns the (list:1) without head.
+
+                                    if args.len() == 1 {
+                                        let lst_node = &args[0];
+
+                                        if let NodeKind::List(lst) = &lst_node.node {
+                                            if lst.len() > 0 {
+                                                let (_, tail) = lst.split_first().unwrap();
+
+                                                Some(Ok(NodeWrapper::new_list(tail.to_vec(), lst_node.hooks.clone(), n.index, n.position)))
+
+                                            } else {
+                                                Some(Err(MifulError::runtime_error("Cannot get tail of empty tuple!", &self.owned_text, lst_node.index, lst_node.position)))
+                                            }// [ERR] Head of empty tuple
+
+                                        } else {
+                                            Some(Err(self.param_type("(list (any))", lst_node.index, lst_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                "reverse" => {
+                                    //
+                                    // Returns the (list:1), reversed.
+
+                                    if args.len() == 1 {
+                                        let lst_node = &args[0];
+
+                                        if let NodeKind::List(lst) = &lst_node.node {
+                                            let mut mut_lst = lst.clone();
+
+                                            mut_lst.reverse();
+
+                                            Some(Ok(NodeWrapper::new_list(mut_lst, lst_node.hooks.clone(), n.index, n.position)))
+
+                                        } else {
+                                            Some(Err(self.param_type("(list (any))", lst_node.index, lst_node.position)))
+                                        }// [ERR] Parameter type
+
+                                    } else {
+                                        Some(Err(self.invalid_param_count(1, args.len(), n)))
+                                    }// [ERR] Parameter count
+                                },
+
+                                f_name => {
+                                    Some(self.call_function(f_name, args, &n))
+                                },
+                            }
                         },
 
-                        f_name => {
-                            Some(self.call_function(f_name, with, n))
-                        },
+                        Err(e) => {
+                            Some(Err(self.param_eval(e)))
+                        }// [ERR] Param eval
                     }
                 },
 
@@ -722,7 +1513,7 @@ impl<'a, 'b> Iterator for Driver<'a, 'a> {
                     }
 
                     Some(Ok(NodeWrapper::new_quote(target, new_with, vec![], n.index, n.position)))
-                },
+                },// [TODO] Inline local function calls
 
                 // NodeKind::LambdaHook(n) => {
                 //     //

@@ -5,4 +5,4 @@ authors = ["Jan Růžička <jan.ruzicka01@gmail.com>"]
 
 [dependencies]
 unicode-segmentation = "1.2.1"
-#regex = "1"
+text_io = "0.1.7"

@@ -1,4 +1,8 @@
 #[macro_use]
+extern crate text_io;
+extern crate unicode_segmentation;
+
+#[macro_use]
 mod parsing;
 mod driver;
 
@@ -11,21 +15,56 @@ fn main() {
         foo
         ()
         {if [> [first (1 2 3)] [last (1 2 3)]]
-            {print
-                [input [string (Enter [: space] a [: space] message:)]]
+            {println
+                [input [string (Enter [:space] a [:space] message: [:space])]]
             }
-            {print
+            {println
                 No
             }
         }
     ]";
 
     let test = "
-    [define println ((val word)) {print (`_obj` string ([:val] [:newline]))}]
-    [define println ((val symbol)) {print (`_obj` string ([:val] [:newline]))}]
-    [define println ((val (obj string))) {print [obj-append val ([:newline])]}]
+    [define drop ((n int) (lst list))
+        {if [= [:n] 0]
+            {:lst}
+            {drop [- [:n] 1] [tail [:lst]]}
+        }
+    ]
 
-    [print (`_obj` string (Hello [:space] world! [:newline]))]";
+    [define elem ((n int) (lst list)) {head [drop [:n] [:lst]]}]
+    [define obj-unwrap ((o (obj any))) {elem 2 [:o]}]
+
+    [define string ((seq (list (word symbol)))) {return (`_obj` string [:seq])}]
+    [define string ((num (int | float))) {return (`_obj` string ([mk-sym [:num]]))}]
+
+    [define println ((val word)) {print [string ([:val] [:newline])]}]
+    [define println ((val symbol)) {print [string ([:val] [:newline])]}]
+    [define println ((val (obj string))) {print [obj-append [:val] ([:newline])]}]
+
+    [println
+        [obj-append
+            [string (Hello: [:space])]
+
+            ([input
+                [string
+                    (Enter [:space] your [:space] name: [:space])
+                ]
+            ])
+        ]
+    ]
+
+    [println
+        [string
+            [length
+                [obj-unwrap
+                    [input
+                        [string ([:l_bracket] input [:r_bracket] [:space])]
+                    ]
+                ]
+            ]
+        ]
+    ]";
 
     let mut driver = driver::Driver::new(test);
 

@@ -2,13 +2,29 @@ extern crate unicode_segmentation;
 use self::unicode_segmentation::UnicodeSegmentation;
 
 use std::cmp;
+use std::io::Write;
+use std::collections::{ HashMap, HashSet };
 
 
 const ERR_CONTEXT_LEN: usize = 10;
 
+
 pub fn segment_text(input: &str) -> Vec<&str> {
     UnicodeSegmentation::graphemes(input, true).collect::<Vec<&str>>()
 }
+
+pub fn input<'a>() -> String {
+    let mut in_s = String::new();
+
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout();
+
+    let _ = stdout.flush();
+    stdin.read_line(&mut in_s).expect("Failed to read input!");
+
+    in_s
+}
+
 
 #[macro_export]
 macro_rules! set {
@@ -117,7 +133,7 @@ pub trait Error {
 
 // [NOTE] Parse errors get thrown by lexer.
 //
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ParseError {
     index: usize,
     position: (usize, usize),
@@ -131,7 +147,7 @@ pub struct ParseError {
 // and the contextual string is supplied when the error
 // is thrown.
 //
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SemanticError {
     index: usize,
     position: (usize, usize),
@@ -142,7 +158,7 @@ pub struct SemanticError {
 
 // [NOTE] Runtime errors get thrown by driver.
 //
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RuntimeError {
     index: usize,
     position: (usize, usize),
@@ -151,7 +167,7 @@ pub struct RuntimeError {
     message: Vec<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum MifulError {
     Parsing(ParseError),
     Semantics(SemanticError),
