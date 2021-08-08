@@ -42,6 +42,13 @@ fn main() {
     [define println ((val symbol)) {print [string ([:val] [:newline])]}]
     [define println ((val (obj string))) {print [obj-append [:val] ([:newline])]}]
 
+    [define factorial ((n int))
+        {if [= [:n] 0]
+            {return 1}
+            {* [:n] [factorial [- [:n] 1]]}
+        }
+    ]
+
     [println
         [obj-append
             [string (Hello: [:space])]
@@ -64,7 +71,10 @@ fn main() {
                 ]
             ]
         ]
-    ]";
+    ]
+
+    [println [string [factorial 12]]]
+    ";
 
     let mut driver = driver::Driver::new(test);
 
